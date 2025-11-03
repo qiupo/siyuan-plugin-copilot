@@ -1,12 +1,12 @@
 <script lang="ts">
     import { onMount, tick, onDestroy } from 'svelte';
     import { chat, estimateTokens, calculateTotalTokens, type Message } from './ai-chat';
-    import { pushMsg, pushErrMsg } from './api';
+    import { pushMsg, pushErrMsg, sql, exportMdContent, openBlock } from './api';
     import ModelSelector from './components/ModelSelector.svelte';
     import SessionManager from './components/SessionManager.svelte';
     import type { ProviderConfig } from './defaultSettings';
     import { settingsStore } from './stores/settings';
-    import { confirm } from 'siyuan';
+    import { confirm, Constants } from 'siyuan';
 
     export let plugin: any;
 
@@ -18,6 +18,12 @@
         updatedAt: number;
     }
 
+    interface ContextDocument {
+        id: string;
+        title: string;
+        content: string;
+    }
+
     let messages: Message[] = [];
     let currentInput = '';
     let isLoading = false;
@@ -25,6 +31,16 @@
     let settings: any = {};
     let messagesContainer: HTMLElement;
     let textareaElement: HTMLTextAreaElement;
+    let inputContainer: HTMLElement;
+
+    // 上下文文档
+    let contextDocuments: ContextDocument[] = [];
+    let isSearchDialogOpen = false;
+    let searchKeyword = '';
+    let searchResults: any[] = [];
+    let isSearching = false;
+    let isDragOver = false;
+    let searchTimeout: number | null = null;
 
     // 会话管理
     let sessions: ChatSession[] = [];
@@ -238,9 +254,12 @@
             return;
         }
 
+        // 用户消息只保存原始输入（不包含文档内容）
+        const userContent = currentInput.trim();
+        
         const userMessage: Message = {
             role: 'user',
-            content: currentInput.trim(),
+            content: userContent,
         };
 
         messages = [...messages, userMessage];
@@ -251,8 +270,20 @@
 
         await scrollToBottom();
 
-        // 准备发送的消息（包含系统提示词）
+        // 准备发送给AI的消息（包含系统提示词和上下文文档）
         const messagesToSend = messages.filter(msg => msg.role !== 'system');
+        
+        // 如果有上下文文档，将其添加到最后一条用户消息中（仅用于发送给AI）
+        if (contextDocuments.length > 0 && messagesToSend.length > 0) {
+            const lastMessage = messagesToSend[messagesToSend.length - 1];
+            if (lastMessage.role === 'user') {
+                const contextText = contextDocuments
+                    .map(doc => `## 文档: ${doc.title}\n\n${doc.content}`)
+                    .join('\n\n---\n\n');
+                lastMessage.content = `以下是相关文档作为上下文：\n\n${contextText}\n\n---\n\n我的问题：${userContent}`;
+            }
+        }
+        
         if (settings.aiSystemPrompt) {
             messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
         }
@@ -376,6 +407,259 @@
     function handleContextMenu(event: MouseEvent, content: string, role: string) {
         event.preventDefault();
         copyMessage(content, role);
+    }
+
+    // 搜索文档
+    async function searchDocuments() {
+        if (!searchKeyword.trim()) {
+            searchResults = [];
+            return;
+        }
+
+        isSearching = true;
+        try {
+            // 将空格分隔的关键词转换为 SQL LIKE 查询
+            // 转义单引号以防止SQL注入
+            const keywords = searchKeyword.trim().split(/\s+/).map(kw => kw.replace(/'/g, "''"));
+            const conditions = keywords.map(kw => `content LIKE '%${kw}%'`).join(' AND ');
+            const sqlQuery = `SELECT * FROM blocks WHERE ${conditions} AND type = 'd' ORDER BY updated DESC LIMIT 20`;
+            
+            const results = await sql(sqlQuery);
+            searchResults = results || [];
+        } catch (error) {
+            console.error('Search error:', error);
+            searchResults = [];
+        } finally {
+            isSearching = false;
+        }
+    }
+
+    // 自动搜索（带防抖）
+    function autoSearch() {
+        // 清除之前的定时器
+        if (searchTimeout !== null) {
+            clearTimeout(searchTimeout);
+        }
+
+        // 设置新的定时器，500ms后执行搜索
+        searchTimeout = window.setTimeout(() => {
+            searchDocuments();
+        }, 500);
+    }
+
+    // 监听搜索关键词变化
+    $: {
+        if (isSearchDialogOpen && searchKeyword !== undefined) {
+            autoSearch();
+        }
+    }
+
+    // 监听对话框关闭，清理搜索状态
+    $: {
+        if (!isSearchDialogOpen) {
+            if (searchTimeout !== null) {
+                clearTimeout(searchTimeout);
+                searchTimeout = null;
+            }
+            // 不清空 searchKeyword 和 searchResults，保留用户的搜索历史
+        }
+    }
+
+    // 添加文档到上下文
+    async function addDocumentToContext(docId: string, docTitle: string) {
+        // 检查是否已存在
+        if (contextDocuments.find(doc => doc.id === docId)) {
+            pushMsg('该文档已在上下文中');
+            return;
+        }
+
+        try {
+            // 获取文档内容
+            const data = await exportMdContent(docId, false, false, 2, 0, false);
+            if (data && data.content) {
+                contextDocuments = [...contextDocuments, {
+                    id: docId,
+                    title: docTitle,
+                    content: data.content
+                }];
+                pushMsg(`已添加文档: ${docTitle}`);
+                isSearchDialogOpen = false;
+                searchKeyword = '';
+                searchResults = [];
+            }
+        } catch (error) {
+            console.error('Add document error:', error);
+            pushErrMsg('添加文档失败');
+        }
+    }
+
+    // 获取当前聚焦的编辑器
+    function getProtyle() {
+        try {
+            if (document.getElementById('sidebar'))
+                return (window as any).siyuan?.mobile?.editor?.protyle;
+            const currDoc = (window as any).siyuan?.layout?.centerLayout?.children
+                .map((item: any) =>
+                    item.children.find(
+                        (item: any) =>
+                            item.headElement?.classList.contains('item--focus') &&
+                            item.panelElement.closest('.layout__wnd--active')
+                    )
+                )
+                .find((item: any) => item);
+            return currDoc?.model?.editor?.protyle;
+        } catch (e) {
+            console.error(e);
+            return null;
+        }
+    }
+
+    // 获取当前聚焦的块ID
+    function getFocusedBlockId(): string | null {
+        const protyle = getProtyle();
+        if (!protyle) return null;
+        
+        // 获取ID：当有聚焦块时获取聚焦块ID，否则获取文档ID
+        return protyle.block?.id || protyle.options?.blockId || protyle.block?.parentID || null;
+    }
+
+    // 通过块ID添加文档
+    async function addItemByBlockId(blockId: string, forceFocusedBlock: boolean = false) {
+        try {
+            // 如果是从拖放操作且有聚焦块，则使用聚焦块
+            let targetBlockId = blockId;
+            if (forceFocusedBlock) {
+                const focusedId = getFocusedBlockId();
+                if (focusedId) {
+                    targetBlockId = focusedId;
+                }
+            }
+
+            const blocks = await sql(`SELECT * FROM blocks WHERE id = '${targetBlockId}'`);
+            if (blocks && blocks.length > 0) {
+                const block = blocks[0];
+                let docId = targetBlockId;
+                let docTitle = block.content || '未命名文档';
+                
+                // 如果是文档块，直接添加
+                if (block.type === 'd') {
+                    await addDocumentToContext(docId, docTitle);
+                } else {
+                    // 如果是普通块，添加该块的内容
+                    await addBlockToContext(targetBlockId, docTitle);
+                }
+            }
+        } catch (error) {
+            console.error('Add block error:', error);
+            pushErrMsg('添加失败');
+        }
+    }
+
+    // 添加块到上下文（而不是整个文档）
+    async function addBlockToContext(blockId: string, blockTitle: string) {
+        // 检查是否已存在
+        if (contextDocuments.find(doc => doc.id === blockId)) {
+            pushMsg('该内容已在上下文中');
+            return;
+        }
+
+        try {
+            // 获取块的Markdown内容
+            const data = await exportMdContent(blockId, false, false, 2, 0, false);
+            if (data && data.content) {
+                contextDocuments = [...contextDocuments, {
+                    id: blockId,
+                    title: blockTitle || '块内容',
+                    content: data.content
+                }];
+                pushMsg(`已添加块: ${blockTitle}`);
+            }
+        } catch (error) {
+            console.error('Add block error:', error);
+            pushErrMsg('添加块失败');
+        }
+    }
+
+    // 删除上下文文档
+    function removeContextDocument(docId: string) {
+        contextDocuments = contextDocuments.filter(doc => doc.id !== docId);
+        pushMsg('已移除文档');
+    }
+
+    // 打开文档
+    async function openDocument(docId: string) {
+        try {
+            await openBlock(docId);
+        } catch (error) {
+            console.error('Open document error:', error);
+            pushErrMsg('打开文档失败');
+        }
+    }
+
+    // 处理拖放
+    function handleDragOver(event: DragEvent) {
+        event.preventDefault();
+        event.stopPropagation();
+        isDragOver = true;
+    }
+
+    function handleDragLeave(event: DragEvent) {
+        event.preventDefault();
+        event.stopPropagation();
+        // 只在真正离开容器时才设置为false
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        if (
+            event.clientX <= rect.left ||
+            event.clientX >= rect.right ||
+            event.clientY <= rect.top ||
+            event.clientY >= rect.bottom
+        ) {
+            isDragOver = false;
+        }
+    }
+
+    async function handleDrop(event: DragEvent) {
+        event.preventDefault();
+        isDragOver = false;
+
+        const type = event.dataTransfer.types[0];
+        if (!type) return;
+
+        if (type.startsWith(Constants.SIYUAN_DROP_GUTTER)) {
+            const meta = type.replace(Constants.SIYUAN_DROP_GUTTER, '');
+            const info = meta.split(Constants.ZWSP);
+            const nodeId = info[2];
+            await addItemByBlockId(nodeId, false);
+        } else if (type.startsWith(Constants.SIYUAN_DROP_FILE)) {
+            const ele: HTMLElement = (window as any).siyuan?.dragElement;
+            if (ele && ele.innerText) {
+                const blockid = ele.innerText;
+                if (blockid && blockid !== '/') {
+                    await addItemByBlockId(blockid, false);
+                }
+                const item: HTMLElement = document.querySelector(
+                    `.file-tree.sy__tree li[data-node-id="${blockid}"]`
+                );
+                if (item) {
+                    item.style.opacity = '1';
+                }
+                (window as any).siyuan.dragElement = undefined;
+            }
+        } else if (event.dataTransfer.types.includes(Constants.SIYUAN_DROP_TAB)) {
+            const data = event.dataTransfer.getData(Constants.SIYUAN_DROP_TAB);
+            const payload = JSON.parse(data);
+            const rootId = payload?.children?.rootId;
+            if (rootId) {
+                // 拖放页签时，如果有聚焦块，则使用聚焦块内容
+                await addItemByBlockId(rootId, true);
+            }
+            const tab = document.querySelector(
+                `li[data-type="tab-header"][data-id="${payload.id}"]`
+            ) as HTMLElement;
+            if (tab) {
+                tab.style.opacity = 'unset';
+            }
+        }
     }
 
     // 会话管理函数
@@ -553,11 +837,45 @@
         </div>
     </div>
 
-    <div class="ai-sidebar__messages" bind:this={messagesContainer}>
+    <!-- 上下文文档列表 -->
+    {#if contextDocuments.length > 0}
+        <div class="ai-sidebar__context-docs">
+            <div class="ai-sidebar__context-docs-title">📚 上下文文档</div>
+            <div class="ai-sidebar__context-docs-list">
+                {#each contextDocuments as doc (doc.id)}
+                    <div class="ai-sidebar__context-doc-item">
+                        <button
+                            class="ai-sidebar__context-doc-remove"
+                            on:click={() => removeContextDocument(doc.id)}
+                            title="移除文档"
+                        >
+                            ×
+                        </button>
+                        <button
+                            class="ai-sidebar__context-doc-link"
+                            on:click={() => openDocument(doc.id)}
+                            title="点击查看文档"
+                        >
+                            {doc.title}
+                        </button>
+                    </div>
+                {/each}
+            </div>
+        </div>
+    {/if}
+
+    <div 
+        class="ai-sidebar__messages" 
+        class:ai-sidebar__messages--drag-over={isDragOver}
+        bind:this={messagesContainer}
+        on:dragover={handleDragOver}
+        on:dragleave={handleDragLeave}
+        on:drop={handleDrop}
+    >
         {#each messages.filter(msg => msg.role !== 'system') as message, index (index)}
-            <div 
+            <div
                 class="ai-message ai-message--{message.role}"
-                on:contextmenu={(e) => handleContextMenu(e, message.content, message.role)}
+                on:contextmenu={e => handleContextMenu(e, message.content, message.role)}
             >
                 <div class="ai-message__header">
                     <span class="ai-message__role">
@@ -578,9 +896,9 @@
         {/each}
 
         {#if isLoading && streamingMessage}
-            <div 
+            <div
                 class="ai-message ai-message--assistant ai-message--streaming"
-                on:contextmenu={(e) => handleContextMenu(e, streamingMessage, 'assistant')}
+                on:contextmenu={e => handleContextMenu(e, streamingMessage, 'assistant')}
             >
                 <div class="ai-message__header">
                     <span class="ai-message__role">🤖 AI</span>
@@ -601,13 +919,19 @@
         {/if}
     </div>
 
-    <div class="ai-sidebar__input-container">
+    <div 
+        class="ai-sidebar__input-container"
+        bind:this={inputContainer}
+        on:dragover={handleDragOver}
+        on:dragleave={handleDragLeave}
+        on:drop={handleDrop}
+    >
         <div class="ai-sidebar__input-row">
             <textarea
                 bind:this={textareaElement}
                 bind:value={currentInput}
                 on:keydown={handleKeydown}
-                placeholder="输入消息... (Ctrl+Enter 发送)"
+                placeholder="输入消息... (Ctrl+Enter 发送，可拖入文档)"
                 class="ai-sidebar__input"
                 disabled={isLoading}
                 rows="1"
@@ -627,15 +951,80 @@
                 {/if}
             </button>
         </div>
-        <div class="ai-sidebar__model-selector-container">
-            <ModelSelector
-                {providers}
-                {currentProvider}
-                {currentModelId}
-                on:select={handleModelSelect}
-            />
+        <div class="ai-sidebar__bottom-row">
+            <button
+                class="b3-button b3-button--text ai-sidebar__search-btn"
+                on:click={() => (isSearchDialogOpen = !isSearchDialogOpen)}
+                title="搜索并添加文档"
+            >
+                <svg class="b3-button__icon"><use xlink:href="#iconSearch"></use></svg>
+            </button>
+            <div class="ai-sidebar__model-selector-container">
+                <ModelSelector
+                    {providers}
+                    {currentProvider}
+                    {currentModelId}
+                    on:select={handleModelSelect}
+                />
+            </div>
         </div>
     </div>
+
+    <!-- 搜索对话框 -->
+    {#if isSearchDialogOpen}
+        <div class="ai-sidebar__search-dialog">
+            <div class="ai-sidebar__search-dialog-overlay" on:click={() => (isSearchDialogOpen = false)}></div>
+            <div class="ai-sidebar__search-dialog-content">
+                <div class="ai-sidebar__search-dialog-header">
+                    <h4>搜索文档</h4>
+                    <button
+                        class="b3-button b3-button--text"
+                        on:click={() => (isSearchDialogOpen = false)}
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconClose"></use></svg>
+                    </button>
+                </div>
+                <div class="ai-sidebar__search-dialog-body">
+                    <div class="ai-sidebar__search-input-row">
+                        <input
+                            type="text"
+                            bind:value={searchKeyword}
+                            on:input={autoSearch}
+                            on:paste={autoSearch}
+                            placeholder="输入关键词，自动搜索"
+                            class="b3-text-field"
+                        />
+                        {#if isSearching}
+                            <div class="ai-sidebar__search-loading">
+                                <svg class="b3-button__icon ai-sidebar__loading-icon">
+                                    <use xlink:href="#iconRefresh"></use>
+                                </svg>
+                            </div>
+                        {/if}
+                    </div>
+                    <div class="ai-sidebar__search-results">
+                        {#if searchResults.length > 0}
+                            {#each searchResults as result (result.id)}
+                                <div class="ai-sidebar__search-result-item">
+                                    <div class="ai-sidebar__search-result-title">
+                                        {result.content || '未命名文档'}
+                                    </div>
+                                    <button
+                                        class="b3-button b3-button--text"
+                                        on:click={() => addDocumentToContext(result.id, result.content)}
+                                    >
+                                        添加
+                                    </button>
+                                </div>
+                            {/each}
+                        {:else if !isSearching && searchKeyword}
+                            <div class="ai-sidebar__search-empty">未找到相关文档</div>
+                        {/if}
+                    </div>
+                </div>
+            </div>
+        </div>
+    {/if}
 </div>
 
 <style lang="scss">
@@ -687,6 +1076,76 @@
         margin-right: 4px;
     }
 
+    .ai-sidebar__context-docs {
+        padding: 12px 16px;
+        background: var(--b3-theme-surface);
+        border-bottom: 1px solid var(--b3-border-color);
+        flex-shrink: 0;
+    }
+
+    .ai-sidebar__context-docs-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--b3-theme-on-surface);
+        margin-bottom: 8px;
+    }
+
+    .ai-sidebar__context-docs-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .ai-sidebar__context-doc-item {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        background: var(--b3-theme-background);
+        border-radius: 4px;
+        border: 1px solid var(--b3-border-color);
+    }
+
+    .ai-sidebar__context-doc-remove {
+        flex-shrink: 0;
+        width: 20px;
+        height: 20px;
+        padding: 0;
+        border: none;
+        background: none;
+        color: var(--b3-theme-on-surface-light);
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+
+        &:hover {
+            background: var(--b3-theme-error-lighter);
+            color: var(--b3-theme-error);
+        }
+    }
+
+    .ai-sidebar__context-doc-link {
+        flex: 1;
+        text-align: left;
+        padding: 0;
+        border: none;
+        background: none;
+        color: var(--b3-theme-primary);
+        cursor: pointer;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+
+        &:hover {
+            text-decoration: underline;
+        }
+    }
+
     .ai-sidebar__messages {
         flex: 1;
         overflow-y: auto;
@@ -694,6 +1153,12 @@
         display: flex;
         flex-direction: column;
         gap: 16px;
+        transition: background-color 0.2s;
+
+        &.ai-sidebar__messages--drag-over {
+            background: var(--b3-theme-primary-lightest);
+            border: 2px dashed var(--b3-theme-primary);
+        }
     }
 
     .ai-sidebar__empty {
@@ -723,7 +1188,7 @@
         gap: 8px;
         animation: fadeIn 0.3s ease-in;
         cursor: context-menu;
-        
+
         &:hover {
             .ai-message__content {
                 box-shadow: 0 0 0 1px var(--b3-border-color);
@@ -841,6 +1306,8 @@
         border-top: 1px solid var(--b3-border-color);
         background: var(--b3-theme-background);
         flex-shrink: 0;
+        position: relative;
+        transition: background-color 0.2s;
     }
 
     .ai-sidebar__input-row {
@@ -874,7 +1341,18 @@
         }
     }
 
+    .ai-sidebar__bottom-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .ai-sidebar__search-btn {
+        flex-shrink: 0;
+    }
+
     .ai-sidebar__model-selector-container {
+        flex: 1;
         display: flex;
         justify-content: flex-end;
     }
@@ -883,6 +1361,7 @@
         align-self: flex-end;
         min-width: 40px;
         height: 40px;
+        flex-shrink: 0;
 
         &:disabled {
             opacity: 0.5;
@@ -901,6 +1380,117 @@
         to {
             transform: rotate(360deg);
         }
+    }
+
+    // 搜索对话框样式
+    .ai-sidebar__search-dialog {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .ai-sidebar__search-dialog-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+    }
+
+    .ai-sidebar__search-dialog-content {
+        position: relative;
+        width: 90%;
+        max-width: 500px;
+        background: var(--b3-theme-background);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        display: flex;
+        flex-direction: column;
+        max-height: 80vh;
+    }
+
+    .ai-sidebar__search-dialog-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px;
+        border-bottom: 1px solid var(--b3-border-color);
+
+        h4 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+        }
+    }
+
+    .ai-sidebar__search-dialog-body {
+        padding: 16px;
+        overflow-y: auto;
+    }
+
+    .ai-sidebar__search-input-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+
+        input {
+            flex: 1;
+        }
+    }
+
+    .ai-sidebar__search-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        color: var(--b3-theme-primary);
+    }
+
+    .ai-sidebar__search-results {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+
+    .ai-sidebar__search-result-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 12px;
+        background: var(--b3-theme-surface);
+        border-radius: 6px;
+        border: 1px solid var(--b3-border-color);
+
+        &:hover {
+            background: var(--b3-theme-primary-lightest);
+        }
+    }
+
+    .ai-sidebar__search-result-title {
+        flex: 1;
+        font-size: 14px;
+        color: var(--b3-theme-on-surface);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .ai-sidebar__search-empty {
+        text-align: center;
+        padding: 32px;
+        color: var(--b3-theme-on-surface-light);
     }
 
     // 响应式布局
