@@ -9,6 +9,7 @@
     import { settingsStore } from './stores/settings';
     import { confirm, Constants } from 'siyuan';
     import { t } from './utils/i18n';
+    import katex from 'katex';
 
     export let plugin: any;
 
@@ -870,12 +871,61 @@
         });
     }
 
-    // 监听消息变化，高亮代码块
+    // 渲染数学公式
+    function renderMathFormulas(element: HTMLElement) {
+        if (!element) return;
+
+        // 使用 tick 确保 DOM 已更新
+        tick().then(() => {
+            try {
+                // 处理行内公式和块级公式
+                const mathElements = element.querySelectorAll(
+                    '[data-subtype="math"]:not([data-math-rendered])'
+                );
+
+                if (mathElements.length === 0) return;
+
+                mathElements.forEach((mathElement: HTMLElement) => {
+                    try {
+                        // 获取数学公式内容
+                        const mathContent = mathElement.getAttribute('data-content');
+                        if (!mathContent) {
+                            return;
+                        }
+
+                        // 判断是行内公式还是块级公式
+                        // 行内公式：data-type="inline-math"
+                        // 块级公式：data-type="NodeMathBlock"
+                        const dataType = mathElement.getAttribute('data-type');
+                        const isBlockMath = dataType === 'NodeMathBlock';
+
+                        // 渲染数学公式
+                        katex.render(mathContent, mathElement, {
+                            throwOnError: false,
+                            displayMode: isBlockMath,
+                        });
+
+                        // 标记已渲染
+                        mathElement.setAttribute('data-math-rendered', 'true');
+                    } catch (error) {
+                        console.error('Render math formula error:', error, mathElement);
+                        // 即使渲染失败也标记，避免重复尝试
+                        mathElement.setAttribute('data-math-rendered', 'true');
+                    }
+                });
+            } catch (error) {
+                console.error('Render math formulas error:', error);
+            }
+        });
+    }
+
+    // 监听消息变化，高亮代码块和渲染数学公式
     $: {
         if (messages.length > 0 || streamingMessage) {
             tick().then(() => {
                 if (messagesContainer) {
                     highlightCodeBlocks(messagesContainer);
+                    renderMathFormulas(messagesContainer);
                 }
             });
         }
