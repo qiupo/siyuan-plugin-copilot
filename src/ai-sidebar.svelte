@@ -36,6 +36,9 @@
     let textareaElement: HTMLTextAreaElement;
     let inputContainer: HTMLElement;
     let fileInputElement: HTMLInputElement;
+    // 是否允许自动滚动到底部（当用户手动向上滚动时禁用）
+    let shouldAutoScroll = true;
+    const AUTO_SCROLL_THRESHOLD = 50; // px，距离底部小于则自动滚动
 
     // 思考过程折叠状态管理
     let thinkingCollapsed: Record<number, boolean> = {};
@@ -370,11 +373,22 @@
         pushMsg('已移除附件');
     }
 
-    // 滚动到底部
-    async function scrollToBottom() {
+    // 处理消息容器的滚动：当用户手动滚动到非底部位置时，禁用自动滚动
+    function handleMessagesScroll() {
+        if (!messagesContainer) return;
+        const distanceToBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight;
+        shouldAutoScroll = distanceToBottom <= AUTO_SCROLL_THRESHOLD;
+    }
+
+    // 滚动到底部。默认会尊重用户是否手动滚动（即只有在 shouldAutoScroll 为 true 时才滚动），
+    // 传入 force=true 强制滚动并恢复自动滚动行为。
+    async function scrollToBottom(force: boolean = false) {
         await tick();
+        if (!force && !shouldAutoScroll) return;
         if (messagesContainer) {
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            // 强制或正常滚动后认为用户位于底部，允许后续自动滚动
+            shouldAutoScroll = true;
         }
     }
 
@@ -1248,7 +1262,7 @@
             }
             currentSessionId = sessionId;
             hasUnsavedChanges = false;
-            await scrollToBottom();
+            await scrollToBottom(true);
             pushMsg(`已加载会话: ${session.title}`);
         }
     }
@@ -1453,6 +1467,7 @@
         on:dragover={handleDragOver}
         on:dragleave={handleDragLeave}
         on:drop={handleDrop}
+        on:scroll={handleMessagesScroll}
     >
         {#each messages.filter(msg => msg.role !== 'system') as message, index (index)}
             <div
@@ -1581,6 +1596,16 @@
                 <p>开始与 AI 对话吧！</p>
                 <p class="ai-sidebar__empty-hint">Ctrl+Enter 发送消息</p>
             </div>
+    {/if}
+
+    {#if !shouldAutoScroll && messages.filter(msg => msg.role !== 'system').length > 0}
+            <button
+                class="ai-sidebar__scroll-to-bottom"
+                on:click={() => scrollToBottom(true)}
+                title="跳转到底部"
+            >
+                ↓ 最新
+            </button>
         {/if}
     </div>
 
@@ -2059,6 +2084,7 @@
 
     .ai-sidebar__messages {
         flex: 1;
+        position: relative;
         overflow-y: auto;
         padding: 16px;
         display: flex;
@@ -2070,6 +2096,21 @@
             background: var(--b3-theme-primary-lightest);
             border: 2px dashed var(--b3-theme-primary);
         }
+    }
+
+    /* 跳转到底部按钮 */
+    .ai-sidebar__scroll-to-bottom {
+        position: absolute;
+        right: 16px;
+        bottom: 96px; /* 放在输入框上方，避免遮挡 */
+        z-index: 50;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--b3-border-color);
+        background: var(--b3-theme-surface);
+        color: var(--b3-theme-on-surface);
+        cursor: pointer;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }
 
     .ai-sidebar__empty {
