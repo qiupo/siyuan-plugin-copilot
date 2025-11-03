@@ -12,8 +12,8 @@
   ],
   "disabledInPublish": true,
   "displayName": {
-    "default": "Copilot",
-    "zh_CN": "Copilot"
+    "default": "Siyuan Copilot",
+    "zh_CN": "Siyuan Copilot"
   },
   "description": {
     "default": "Siyuan AI Assistant, supports multiple AI interfaces including OpenAI, Google Gemini, DeepSeek, and more. Supports dragging blocks and tabs to get note context.",
@@ -29,10 +29,7 @@
     ]
   },
   "keywords": [
-    "ai",
-    "copilot",
     "llm",
-    "assistant",
     "chatbot",
     "openai",
     "gemini",
