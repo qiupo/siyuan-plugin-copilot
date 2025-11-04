@@ -330,6 +330,14 @@ async function chatGeminiFormat(
         }
     };
 
+    // 如果启用思考模式，添加 thinkingConfig 参数
+    if (options.enableThinking) {
+        requestBody.generationConfig.thinkingConfig = {
+            thinkingBudget: -1, // -1 表示动态思考
+            includeThoughts: true // 包含思考过程
+        };
+    }
+
     if (systemInstruction) {
         requestBody.systemInstruction = {
             parts: [{ text: systemInstruction.content }]
@@ -461,7 +469,9 @@ async function handleGeminiStreamResponse(
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let fullText = '';
+    let thinkingText = '';
     let buffer = '';
+    let isThinkingPhase = false;
 
     try {
         while (true) {
@@ -479,16 +489,39 @@ async function handleGeminiStreamResponse(
 
                 try {
                     const json = JSON.parse(trimmed.slice(6));
-                    const content = json.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const parts = json.candidates?.[0]?.content?.parts;
 
-                    if (content) {
-                        fullText += content;
-                        options.onChunk?.(content);
+                    if (parts && Array.isArray(parts)) {
+                        for (const part of parts) {
+                            if (!part.text) continue;
+
+                            // part.thought 是布尔值，表示这个 part 是否是思考内容
+                            if (options.enableThinking && part.thought === true) {
+                                // 这是思考内容
+                                isThinkingPhase = true;
+                                thinkingText += part.text;
+                                options.onThinkingChunk?.(part.text);
+                            } else if (part.text) {
+                                // 这是正常回复内容
+                                // 如果之前在思考阶段，现在开始输出正文，说明思考结束
+                                if (isThinkingPhase && options.onThinkingComplete) {
+                                    options.onThinkingComplete(thinkingText);
+                                    isThinkingPhase = false;
+                                }
+                                fullText += part.text;
+                                options.onChunk?.(part.text);
+                            }
+                        }
                     }
                 } catch (e) {
                     console.error('Failed to parse Gemini SSE data:', e);
                 }
             }
+        }
+
+        // 如果结束时还在思考阶段，调用思考完成回调
+        if (isThinkingPhase && options.onThinkingComplete) {
+            options.onThinkingComplete(thinkingText);
         }
 
         options.onComplete?.(fullText);
@@ -499,6 +532,9 @@ async function handleGeminiStreamResponse(
             // 如果已经有部分内容，仍然调用 onComplete
             if (fullText) {
                 options.onComplete?.(fullText);
+            }
+            if (thinkingText && options.onThinkingComplete) {
+                options.onThinkingComplete(thinkingText);
             }
         } else {
             console.error('Gemini stream reading error:', error);
