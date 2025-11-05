@@ -117,6 +117,6 @@ Maintaining plugins takes time and effort, personal time and energy are limited.
 
 Features I need will be gradually improved (tips can encourage updates), some features I think can be improved but are not necessary at this stage require tips to improve (will be marked with tip labels and required amounts), while unnecessary features or features that are very difficult to implement will directly close issues without consideration.
 
-Friends who have accumulated $50 in tips and want to add me on WeChat can send an email to achuan-2@outlook.com for friend requests (I won't reply to emails or add friends if the tips don't reach $50, because I don't want to be a free customer service)
+Friends who have accumulated ¥50 in tips and want to add me on WeChat can send an email to achuan-2@outlook.com for friend requests (I won't reply to emails or add friends if the tips don't reach ¥50, because I don't want to be a free customer service)
 
 ![image](https://camo.githubusercontent.com/8052f6f2e7dafba534e781934efa9bcb084fa3a9dfa5c221a85ac63db8b043cb/68747470733a2f2f6173736574732e62336c6f6766696c652e636f6d2f73697975616e2f313631303230353735393030352f6173736574732f6e6574776f726b2d61737365742d696d6167652d32303235303631343132333535382d667568697235762e706e67)
