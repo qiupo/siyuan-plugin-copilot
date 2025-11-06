@@ -115,9 +115,22 @@
             "label": "Mode",
             "ask": "Ask Mode",
             "edit": "Edit Mode",
+            "agent": "Agent Mode",
             "autoApprove": "Auto Approve",
             "askDescription": "Q&A only, no modification to note content",
-            "editDescription": "AI can directly edit SiYuan note content"
+            "editDescription": "AI can directly edit SiYuan note content",
+            "agentDescription": "AI can use tools to autonomously complete complex tasks",
+            "selectTools": "Select Tools"
+        },
+        "agent": {
+            "tools": "Tools",
+            "selectTools": "Select Tools",
+            "toolsSelected": "Selected Tools",
+            "toolCall": "Tool Call",
+            "toolCallCompleted": "Tool Call Completed",
+            "toolCallFailed": "Tool Call Failed",
+            "viewResult": "View Result",
+            "hideResult": "Hide Result"
         },
         "empty": {
             "title": "Start Conversation",
@@ -330,7 +343,10 @@
         "search": "Search",
         "searchAndAdd": "Search and Add Models",
         "settings": "Settings",
-        "configComplete": "Configuration loading completed"
+        "configComplete": "Configuration loading completed",
+        "expand": "Expand",
+        "collapse": "Collapse",
+        "required": "Required"
     },
     "toolbar": {
         "aiChat": "AI Chat",
@@ -363,5 +379,60 @@
         "vision": "Vision",
         "noMatch": "No matching models found",
         "fetching": "Fetching model list..."
+    },
+    "tools": {
+        "category": {
+            "web": "Web Tools",
+            "siyuan": "SiYuan Notes"
+        },
+        "selector": {
+            "title": "Tool Selection",
+            "info": "Select the tools that AI can use. AI will automatically determine when to use these tools based on the conversation context.",
+            "selectAll": "Select All",
+            "deselectAll": "Deselect All",
+            "selected": "Selected",
+            "parameters": "Parameters"
+        },
+        "autoApprove": {
+            "label": "Auto Approve",
+            "tooltip": "When enabled, this tool call will not require manual confirmation",
+            "footerInfo": "You can set auto-approve for each tool individually"
+        },
+        "fetch_web_content": {
+            "name": "Fetch Web Content"
+        },
+        "siyuan_sql_query": {
+            "name": "SQL Query"
+        },
+        "siyuan_insert_block": {
+            "name": "Insert Block"
+        },
+        "siyuan_update_block": {
+            "name": "Update Block"
+        },
+        "siyuan_get_block_content": {
+            "name": "Get Block Content"
+        },
+        "siyuan_create_document": {
+            "name": "Create Document"
+        },
+        "siyuan_list_notebooks": {
+            "name": "List Notebooks"
+        },
+        "siyuan_create_notebook": {
+            "name": "Create Notebook"
+        },
+        "siyuan_rename_document": {
+            "name": "Rename Document"
+        },
+        "siyuan_move_documents": {
+            "name": "Move Documents"
+        },
+        "calling": "Calling Tool",
+        "called": "Tool Called",
+        "result": "Tool Result",
+        "waitingApproval": "Waiting for Approval",
+        "approve": "Approve",
+        "reject": "Reject"
     }
 }

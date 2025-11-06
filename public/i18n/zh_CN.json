@@ -114,9 +114,22 @@
             "label": "模式",
             "ask": "问答模式",
             "edit": "编辑模式",
+            "agent": "Agent模式",
             "autoApprove": "自动批准",
             "askDescription": "仅进行问答，不修改笔记内容",
-            "editDescription": "AI可以直接编辑思源笔记内容"
+            "editDescription": "AI可以直接编辑思源笔记内容",
+            "agentDescription": "AI可以使用工具自主完成复杂任务",
+            "selectTools": "选择工具"
+        },
+        "agent": {
+            "tools": "工具",
+            "selectTools": "选择工具",
+            "toolsSelected": "已选工具",
+            "toolCall": "工具调用",
+            "toolCallCompleted": "工具调用完成",
+            "toolCallFailed": "工具调用失败",
+            "viewResult": "查看结果",
+            "hideResult": "隐藏结果"
         },
         "empty": {
             "title": "开始对话",
@@ -329,7 +342,10 @@
         "search": "搜索",
         "searchAndAdd": "搜索并添加模型",
         "settings": "设置",
-        "configComplete": "加载配置文件完成"
+        "configComplete": "加载配置文件完成",
+        "expand": "展开",
+        "collapse": "折叠",
+        "required": "必填"
     },
     "toolbar": {
         "aiChat": "AI 问答",
@@ -362,5 +378,60 @@
         "vision": "视觉",
         "noMatch": "没有找到匹配的模型",
         "fetching": "正在获取模型列表..."
+    },
+    "tools": {
+        "category": {
+            "web": "网页工具",
+            "siyuan": "思源笔记"
+        },
+        "selector": {
+            "title": "工具选择",
+            "info": "选择AI可以使用的工具。AI会根据对话内容自动判断何时使用这些工具。（注意：添加工具会增加token数）",
+            "selectAll": "全选",
+            "deselectAll": "取消全选",
+            "selected": "已选择",
+            "parameters": "参数"
+        },
+        "autoApprove": {
+            "label": "自动批准",
+            "tooltip": "启用后，此工具调用不需要手动确认",
+            "footerInfo": "可为每个工具单独设置是否自动批准"
+        },
+        "fetch_web_content": {
+            "name": "获取网页内容"
+        },
+        "siyuan_sql_query": {
+            "name": "SQL查询"
+        },
+        "siyuan_insert_block": {
+            "name": "插入块"
+        },
+        "siyuan_update_block": {
+            "name": "更新块"
+        },
+        "siyuan_get_block_content": {
+            "name": "获取块内容"
+        },
+        "siyuan_create_document": {
+            "name": "创建文档"
+        },
+        "siyuan_list_notebooks": {
+            "name": "列出笔记本"
+        },
+        "siyuan_create_notebook": {
+            "name": "创建笔记本"
+        },
+        "siyuan_rename_document": {
+            "name": "重命名文档"
+        },
+        "siyuan_move_documents": {
+            "name": "移动文档"
+        },
+        "calling": "正在调用工具",
+        "called": "工具已调用",
+        "result": "工具结果",
+        "waitingApproval": "等待批准",
+        "approve": "批准",
+        "reject": "拒绝"
     }
 }

@@ -3,6 +3,15 @@
  * 支持多个AI平台的API调用和流式输出
  */
 
+export interface ToolCall {
+    id: string;
+    type: 'function';
+    function: {
+        name: string;
+        arguments: string;
+    };
+}
+
 export interface MessageAttachment {
     type: 'image' | 'file';
     name: string;
@@ -31,11 +40,15 @@ export interface EditOperation {
 }
 
 export interface Message {
-    role: 'user' | 'assistant' | 'system';
+    role: 'user' | 'assistant' | 'system' | 'tool';
     content: string | MessageContent[];
     attachments?: MessageAttachment[];
     thinking?: string; // 思考过程内容
     editOperations?: EditOperation[]; // 编辑操作
+    tool_calls?: ToolCall[]; // Tool Calls
+    tool_call_id?: string; // Tool 结果的 call_id
+    name?: string; // Tool 的名称
+    finalReply?: string; // Agent模式：工具调用后的最终回复
 }
 
 export interface ChatOptions {
@@ -52,6 +65,9 @@ export interface ChatOptions {
     enableThinking?: boolean; // 是否启用思考模式
     onThinkingChunk?: (chunk: string) => void; // 思考过程回调
     onThinkingComplete?: (thinking: string) => void; // 思考完成回调
+    tools?: any[]; // Agent模式的工具列表
+    onToolCall?: (toolCall: ToolCall) => void; // Tool Call 回调
+    onToolCallComplete?: (toolCalls: ToolCall[]) => void; // Tool Calls 完成回调
 }
 
 export interface ModelInfo {
@@ -224,11 +240,26 @@ async function chatOpenAIFormat(
 ): Promise<void> {
 
 
-    // 转换消息格式以支持多模态
-    const formattedMessages = options.messages.map(msg => ({
-        role: msg.role,
-        content: msg.content
-    }));
+    // 转换消息格式以支持多模态和工具调用
+    const formattedMessages = options.messages.map(msg => {
+        const formatted: any = {
+            role: msg.role,
+            content: msg.content
+        };
+
+        // 添加工具调用信息
+        if (msg.tool_calls) {
+            formatted.tool_calls = msg.tool_calls;
+        }
+
+        // 添加工具返回信息
+        if (msg.role === 'tool') {
+            formatted.tool_call_id = msg.tool_call_id;
+            formatted.name = msg.name;
+        }
+
+        return formatted;
+    });
 
     const requestBody: any = {
         model: options.model,
@@ -237,6 +268,12 @@ async function chatOpenAIFormat(
         max_tokens: options.maxTokens,
         stream: options.stream !== false
     };
+
+    // 添加工具定义（Agent模式）
+    if (options.tools && options.tools.length > 0) {
+        requestBody.tools = options.tools;
+        requestBody.tool_choice = 'auto'; // 让模型自动决定是否调用工具
+    }
 
     // 如果启用思考模式，添加相关参数（适用于支持的模型如 DeepSeek）
     if (options.enableThinking) {
@@ -393,6 +430,8 @@ async function handleStreamResponse(
     let thinkingText = '';
     let buffer = '';
     let isThinkingPhase = false;
+    let toolCalls: ToolCall[] = [];
+    let toolCallBuffer: Record<number, { id?: string; name?: string; arguments?: string }> = {};
 
     try {
         while (true) {
@@ -420,6 +459,28 @@ async function handleStreamResponse(
                             options.onThinkingChunk?.(delta.reasoning_content);
                         }
 
+                        // 检查是否有工具调用
+                        if (delta?.tool_calls) {
+                            for (const toolCallDelta of delta.tool_calls) {
+                                const index = toolCallDelta.index;
+                                if (!toolCallBuffer[index]) {
+                                    toolCallBuffer[index] = {};
+                                }
+
+                                // 累积工具调用信息
+                                if (toolCallDelta.id) {
+                                    toolCallBuffer[index].id = toolCallDelta.id;
+                                }
+                                if (toolCallDelta.function?.name) {
+                                    toolCallBuffer[index].name = toolCallDelta.function.name;
+                                }
+                                if (toolCallDelta.function?.arguments) {
+                                    toolCallBuffer[index].arguments =
+                                        (toolCallBuffer[index].arguments || '') + toolCallDelta.function.arguments;
+                                }
+                            }
+                        }
+
                         // 普通内容
                         const content = delta?.content;
                         if (content) {
@@ -441,6 +502,24 @@ async function handleStreamResponse(
         // 如果结束时还在思考阶段，调用思考完成回调
         if (isThinkingPhase && options.onThinkingComplete) {
             options.onThinkingComplete(thinkingText);
+        }
+
+        // 处理完整的工具调用
+        if (Object.keys(toolCallBuffer).length > 0) {
+            toolCalls = Object.values(toolCallBuffer)
+                .filter(tc => tc.id && tc.name && tc.arguments)
+                .map(tc => ({
+                    id: tc.id!,
+                    type: 'function' as const,
+                    function: {
+                        name: tc.name!,
+                        arguments: tc.arguments!,
+                    },
+                }));
+
+            if (toolCalls.length > 0 && options.onToolCallComplete) {
+                options.onToolCallComplete(toolCalls);
+            }
         }
 
         options.onComplete?.(fullText);

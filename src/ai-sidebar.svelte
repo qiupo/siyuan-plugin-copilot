@@ -1,6 +1,12 @@
 <script lang="ts">
     import { onMount, tick, onDestroy } from 'svelte';
-    import { chat, type Message, type MessageAttachment, type EditOperation } from './ai-chat';
+    import {
+        chat,
+        type Message,
+        type MessageAttachment,
+        type EditOperation,
+        type ToolCall,
+    } from './ai-chat';
     import type { MessageContent } from './ai-chat';
     import { getActiveEditor } from 'siyuan';
     import {
@@ -18,10 +24,12 @@
     } from './api';
     import ModelSelector from './components/ModelSelector.svelte';
     import SessionManager from './components/SessionManager.svelte';
+    import ToolSelector, { type ToolConfig } from './components/ToolSelector.svelte';
     import type { ProviderConfig } from './defaultSettings';
     import { settingsStore } from './stores/settings';
     import { confirm, Constants } from 'siyuan';
     import { t } from './utils/i18n';
+    import { AVAILABLE_TOOLS, executeToolCall } from './tools';
 
     export let plugin: any;
     export let initialMessage: string = ''; // 初始消息
@@ -111,13 +119,23 @@
     let messageFontSize = 12;
 
     // 编辑模式
-    type ChatMode = 'ask' | 'edit';
+    type ChatMode = 'ask' | 'edit' | 'agent';
     let chatMode: ChatMode = 'ask';
     let autoApproveEdit = false; // 自动批准编辑操作
     let isDiffDialogOpen = false;
     let currentDiffOperation: EditOperation | null = null;
     type DiffViewMode = 'diff' | 'split';
     let diffViewMode: DiffViewMode = 'diff'; // diff查看模式：diff或split
+
+    // Agent 模式
+    let isToolSelectorOpen = false;
+    let selectedTools: ToolConfig[] = []; // 选中的工具配置列表
+    let toolCallsInProgress: Set<string> = new Set(); // 正在执行的工具调用ID
+    let toolCallsExpanded: Record<string, boolean> = {}; // 工具调用是否展开，默认折叠
+    let toolCallResultsExpanded: Record<string, boolean> = {}; // 工具结果是否展开，默认折叠
+    let pendingToolCall: ToolCall | null = null; // 待批准的工具调用
+    let isToolApprovalDialogOpen = false; // 工具批准对话框是否打开
+    let isToolConfigLoaded = false; // 标记工具配置是否已加载
 
     // 订阅设置变化
     let unsubscribe: () => void;
@@ -141,6 +159,9 @@
 
         // 加载提示词
         await loadPrompts();
+
+        // 加载 Agent 模式的工具配置
+        await loadToolsConfig();
 
         // 如果有系统提示词，添加到消息列表
         if (settings.aiSystemPrompt) {
@@ -204,6 +225,11 @@
 
         // 移除全局点击事件监听器
         document.removeEventListener('click', handleClickOutside);
+
+        // 保存工具配置
+        if (isToolConfigLoaded) {
+            await saveToolsConfig();
+        }
 
         // 如果有未保存的更改，自动保存当前会话
         if (hasUnsavedChanges && messages.filter(m => m.role !== 'system').length > 0) {
@@ -586,12 +612,26 @@
 
         // 准备发送给AI的消息（包含系统提示词和上下文文档）
         // 深拷贝消息数组，避免修改原始消息
-        const messagesToSend = messages
+        // 保留工具调用相关字段（如果存在），以便在 Agent 模式下正确处理历史工具调用
+        let messagesToSend = messages
             .filter(msg => msg.role !== 'system')
-            .map(msg => ({
-                role: msg.role,
-                content: msg.content,
-            }));
+            .map(msg => {
+                const baseMsg: any = {
+                    role: msg.role,
+                    content: msg.content,
+                };
+
+                // 只在字段存在时才包含，避免传递 undefined 字段给 API
+                if (msg.tool_calls) {
+                    baseMsg.tool_calls = msg.tool_calls;
+                }
+                if (msg.tool_call_id) {
+                    baseMsg.tool_call_id = msg.tool_call_id;
+                    baseMsg.name = msg.name;
+                }
+
+                return baseMsg;
+            });
 
         // 处理最后一条用户消息，添加附件和上下文文档
         if (messagesToSend.length > 0) {
@@ -858,137 +898,398 @@
             // 检查是否启用思考模式
             const enableThinking = modelConfig.capabilities?.thinking || false;
 
-            await chat(
-                currentProvider,
-                {
-                    apiKey: providerConfig.apiKey,
-                    model: modelConfig.id,
-                    messages: messagesToSend,
-                    temperature: modelConfig.temperature,
-                    maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
-                    stream: true,
-                    signal: abortController.signal, // 传递 AbortSignal
-                    enableThinking, // 启用思考模式
-                    onThinkingChunk: enableThinking
-                        ? async (chunk: string) => {
-                              isThinkingPhase = true;
-                              streamingThinking += chunk;
-                              await scrollToBottom();
-                          }
-                        : undefined,
-                    onThinkingComplete: enableThinking
-                        ? (thinking: string) => {
-                              isThinkingPhase = false;
-                              // 思考完成后自动折叠
-                              thinkingCollapsed[messages.length] = true;
-                          }
-                        : undefined,
-                    onChunk: async (chunk: string) => {
-                        streamingMessage += chunk;
-                        await scrollToBottom();
-                    },
-                    onComplete: async (fullText: string) => {
-                        // 转换 LaTeX 数学公式格式为 Markdown 格式
-                        const convertedText = convertLatexToMarkdown(fullText);
+            // 准备 Agent 模式的工具列表
+            let toolsForAgent: any[] | undefined = undefined;
+            if (chatMode === 'agent' && selectedTools.length > 0) {
+                // 根据选中的工具名称筛选出对应的工具定义
+                toolsForAgent = AVAILABLE_TOOLS.filter(tool =>
+                    selectedTools.some(t => t.name === tool.function.name)
+                );
+            }
 
-                        const assistantMessage: Message = {
-                            role: 'assistant',
-                            content: convertedText,
-                        };
+            // Agent 模式使用循环调用
+            if (chatMode === 'agent' && toolsForAgent && toolsForAgent.length > 0) {
+                let shouldContinue = true;
+                // 记录第一次工具调用后创建的assistant消息索引
+                let firstToolCallMessageIndex: number | null = null;
 
-                        // 如果有思考内容，添加到消息中
-                        if (enableThinking && streamingThinking) {
-                            assistantMessage.thinking = streamingThinking;
-                        }
+                while (shouldContinue && !abortController.signal.aborted) {
+                    // 标记是否收到工具调用
+                    let receivedToolCalls = false;
+                    // 用于等待工具执行完成的 Promise
+                    let toolExecutionComplete: (() => void) | null = null;
+                    const toolExecutionPromise = new Promise<void>(resolve => {
+                        toolExecutionComplete = resolve;
+                    });
 
-                        // 如果是编辑模式，解析编辑操作
-                        if (chatMode === 'edit') {
-                            const editOperations = parseEditOperations(convertedText);
-                            if (editOperations.length > 0) {
-                                // 异步获取每个块的旧内容（kramdown格式和Markdown格式）
-                                for (const op of editOperations) {
-                                    try {
-                                        // 获取kramdown格式（用于应用编辑）
-                                        const blockData = await getBlockKramdown(op.blockId);
-                                        if (blockData && blockData.kramdown) {
-                                            op.oldContent = blockData.kramdown;
-                                        }
+                    await chat(
+                        currentProvider,
+                        {
+                            apiKey: providerConfig.apiKey,
+                            model: modelConfig.id,
+                            messages: messagesToSend,
+                            temperature: modelConfig.temperature,
+                            maxTokens:
+                                modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
+                            stream: true,
+                            signal: abortController.signal,
+                            enableThinking,
+                            tools: toolsForAgent,
+                            onThinkingChunk: enableThinking
+                                ? async (chunk: string) => {
+                                      isThinkingPhase = true;
+                                      streamingThinking += chunk;
+                                      await scrollToBottom();
+                                  }
+                                : undefined,
+                            onThinkingComplete: enableThinking
+                                ? (thinking: string) => {
+                                      isThinkingPhase = false;
+                                      thinkingCollapsed[messages.length] = true;
+                                  }
+                                : undefined,
+                            onToolCallComplete: async (toolCalls: ToolCall[]) => {
+                                console.log('Tool calls received:', toolCalls);
+                                receivedToolCalls = true;
 
-                                        // 获取Markdown格式（用于显示差异）
-                                        const mdData = await exportMdContent(
-                                            op.blockId,
-                                            false,
-                                            false,
-                                            2,
-                                            0,
-                                            false
-                                        );
-                                        if (mdData && mdData.content) {
-                                            op.oldContentForDisplay = mdData.content;
-                                        }
-
-                                        // 处理newContent用于显示（移除kramdown ID标记）
-                                        op.newContentForDisplay = op.newContent
-                                            .replace(/\{:\s*id="[^"]+"\s*\}/g, '')
-                                            .trim();
-                                    } catch (error) {
-                                        console.error(`获取块 ${op.blockId} 内容失败:`, error);
-                                    }
-                                }
-                                assistantMessage.editOperations = editOperations;
-
-                                // 如果启用了自动批准，则自动应用所有编辑操作
-                                if (autoApproveEdit) {
+                                // 如果是第一次工具调用，创建新的assistant消息
+                                if (firstToolCallMessageIndex === null) {
+                                    const assistantMessage: Message = {
+                                        role: 'assistant',
+                                        content: streamingMessage || '',
+                                        tool_calls: toolCalls,
+                                    };
                                     messages = [...messages, assistantMessage];
-                                    const currentMessageIndex = messages.length - 1;
-
-                                    for (const op of editOperations) {
-                                        await applyEditOperation(op, currentMessageIndex);
-                                    }
-
-                                    // 更新消息状态
+                                    firstToolCallMessageIndex = messages.length - 1;
+                                } else {
+                                    // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
+                                    const existingMessage = messages[firstToolCallMessageIndex];
+                                    existingMessage.tool_calls = [
+                                        ...(existingMessage.tool_calls || []),
+                                        ...toolCalls,
+                                    ];
                                     messages = [...messages];
                                 }
-                            }
-                        }
+                                streamingMessage = '';
 
-                        if (
-                            !autoApproveEdit ||
-                            chatMode !== 'edit' ||
-                            !assistantMessage.editOperations?.length
-                        ) {
-                            messages = [...messages, assistantMessage];
-                        }
-                        streamingMessage = '';
-                        streamingThinking = '';
-                        isThinkingPhase = false;
-                        isLoading = false;
-                        abortController = null;
-                        hasUnsavedChanges = true;
+                                // 处理每个工具调用
+                                for (const toolCall of toolCalls) {
+                                    const toolConfig = selectedTools.find(
+                                        t => t.name === toolCall.function.name
+                                    );
+                                    const autoApprove = toolConfig?.autoApprove || false;
 
-                        // AI 回复完成后，自动保存当前会话
-                        await saveCurrentSession(true);
-                    },
-                    onError: (error: Error) => {
-                        // 如果是主动中断，不显示错误
-                        if (error.message !== 'Request aborted') {
-                            // 将错误消息作为一条 assistant 消息添加
-                            const errorMessage: Message = {
+                                    try {
+                                        let toolResult: string;
+
+                                        if (autoApprove) {
+                                            // 自动批准：直接执行工具
+                                            console.log(
+                                                `Auto-approving tool call: ${toolCall.function.name}`
+                                            );
+                                            toolResult = await executeToolCall(toolCall);
+
+                                            // 添加工具结果消息
+                                            const toolResultMessage: Message = {
+                                                role: 'tool',
+                                                tool_call_id: toolCall.id,
+                                                name: toolCall.function.name,
+                                                content: toolResult,
+                                            };
+                                            messages = [...messages, toolResultMessage];
+                                        } else {
+                                            // 需要手动批准：显示批准对话框
+                                            console.log(
+                                                `Tool call requires approval: ${toolCall.function.name}`
+                                            );
+
+                                            // 显示批准对话框
+                                            pendingToolCall = toolCall;
+                                            isToolApprovalDialogOpen = true;
+
+                                            // 等待用户批准或拒绝
+                                            const approved = await new Promise<boolean>(resolve => {
+                                                // 临时保存 resolve 函数
+                                                (window as any).__toolApprovalResolve = resolve;
+                                            });
+
+                                            if (approved) {
+                                                toolResult = await executeToolCall(toolCall);
+
+                                                // 添加工具结果消息
+                                                const toolResultMessage: Message = {
+                                                    role: 'tool',
+                                                    tool_call_id: toolCall.id,
+                                                    name: toolCall.function.name,
+                                                    content: toolResult,
+                                                };
+                                                messages = [...messages, toolResultMessage];
+                                            } else {
+                                                // 用户拒绝
+                                                const toolResultMessage: Message = {
+                                                    role: 'tool',
+                                                    tool_call_id: toolCall.id,
+                                                    name: toolCall.function.name,
+                                                    content: `用户拒绝执行工具 ${toolCall.function.name}`,
+                                                };
+                                                messages = [...messages, toolResultMessage];
+                                            }
+                                        }
+                                    } catch (error) {
+                                        console.error(
+                                            `Tool execution failed: ${toolCall.function.name}`,
+                                            error
+                                        );
+                                        const errorMessage: Message = {
+                                            role: 'tool',
+                                            tool_call_id: toolCall.id,
+                                            name: toolCall.function.name,
+                                            content: `工具执行失败: ${(error as Error).message}`,
+                                        };
+                                        messages = [...messages, errorMessage];
+                                    }
+                                }
+
+                                hasUnsavedChanges = true;
+
+                                // 更新 messagesToSend，准备下一次循环
+                                // 只在字段存在时才包含，避免传递 undefined 字段给 API
+                                messagesToSend = messages.map(msg => {
+                                    const baseMsg: any = {
+                                        role: msg.role,
+                                        content: msg.content,
+                                    };
+
+                                    // 只在有工具调用相关字段时才包含
+                                    if (msg.tool_calls) {
+                                        baseMsg.tool_calls = msg.tool_calls;
+                                    }
+                                    if (msg.tool_call_id) {
+                                        baseMsg.tool_call_id = msg.tool_call_id;
+                                        baseMsg.name = msg.name;
+                                    }
+
+                                    return baseMsg;
+                                });
+
+                                // 通知工具执行完成
+                                toolExecutionComplete?.();
+                            },
+                            onChunk: async (chunk: string) => {
+                                streamingMessage += chunk;
+                                await scrollToBottom();
+                            },
+                            onComplete: async (fullText: string) => {
+                                // 如果没有收到工具调用，说明对话结束
+                                if (!receivedToolCalls) {
+                                    shouldContinue = false;
+
+                                    const convertedText = convertLatexToMarkdown(fullText);
+
+                                    // 如果之前有工具调用，将最终回复存储到 finalReply 字段
+                                    if (
+                                        firstToolCallMessageIndex !== null &&
+                                        convertedText.trim()
+                                    ) {
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        // 将AI的最终回复存储到 finalReply 字段
+                                        existingMessage.finalReply = convertedText;
+
+                                        // 添加思考内容（如果有）
+                                        if (enableThinking && streamingThinking) {
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+
+                                        messages = [...messages];
+                                    } else {
+                                        // 如果没有工具调用，创建新的assistant消息
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: convertedText,
+                                        };
+
+                                        if (enableThinking && streamingThinking) {
+                                            assistantMessage.thinking = streamingThinking;
+                                        }
+
+                                        messages = [...messages, assistantMessage];
+                                    }
+
+                                    streamingMessage = '';
+                                    streamingThinking = '';
+                                    isThinkingPhase = false;
+                                    isLoading = false;
+                                    abortController = null;
+                                    hasUnsavedChanges = true;
+
+                                    await saveCurrentSession(true);
+
+                                    // 通知完成（即使没有工具调用）
+                                    toolExecutionComplete?.();
+                                } else {
+                                    // 如果有工具调用，onComplete 不做任何事，等待 onToolCallComplete 完成
+                                    // 不调用 toolExecutionComplete，因为工具还在执行中
+                                }
+                            },
+                            onError: (error: Error) => {
+                                shouldContinue = false;
+                                if (error.message !== 'Request aborted') {
+                                    const errorMessage: Message = {
+                                        role: 'assistant',
+                                        content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                    };
+                                    messages = [...messages, errorMessage];
+                                    hasUnsavedChanges = true;
+                                }
+                                isLoading = false;
+                                streamingMessage = '';
+                                streamingThinking = '';
+                                isThinkingPhase = false;
+                                abortController = null;
+
+                                // 通知完成（错误时也要结束等待）
+                                toolExecutionComplete?.();
+                            },
+                        },
+                        providerConfig.customApiUrl
+                    );
+
+                    // 等待工具执行完成后再继续循环
+                    await toolExecutionPromise;
+                }
+            } else {
+                // 非 Agent 模式或没有工具，使用原来的逻辑
+                await chat(
+                    currentProvider,
+                    {
+                        apiKey: providerConfig.apiKey,
+                        model: modelConfig.id,
+                        messages: messagesToSend,
+                        temperature: modelConfig.temperature,
+                        maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
+                        stream: true,
+                        signal: abortController.signal,
+                        enableThinking,
+                        onThinkingChunk: enableThinking
+                            ? async (chunk: string) => {
+                                  isThinkingPhase = true;
+                                  streamingThinking += chunk;
+                                  await scrollToBottom();
+                              }
+                            : undefined,
+                        onThinkingComplete: enableThinking
+                            ? (thinking: string) => {
+                                  isThinkingPhase = false;
+                                  thinkingCollapsed[messages.length] = true;
+                              }
+                            : undefined,
+                        onChunk: async (chunk: string) => {
+                            streamingMessage += chunk;
+                            await scrollToBottom();
+                        },
+                        onComplete: async (fullText: string) => {
+                            // 转换 LaTeX 数学公式格式为 Markdown 格式
+                            const convertedText = convertLatexToMarkdown(fullText);
+
+                            const assistantMessage: Message = {
                                 role: 'assistant',
-                                content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                content: convertedText,
                             };
-                            messages = [...messages, errorMessage];
+
+                            // 如果有思考内容，添加到消息中
+                            if (enableThinking && streamingThinking) {
+                                assistantMessage.thinking = streamingThinking;
+                            }
+
+                            // 如果是编辑模式，解析编辑操作
+                            if (chatMode === 'edit') {
+                                const editOperations = parseEditOperations(convertedText);
+                                if (editOperations.length > 0) {
+                                    // 异步获取每个块的旧内容（kramdown格式和Markdown格式）
+                                    for (const op of editOperations) {
+                                        try {
+                                            // 获取kramdown格式（用于应用编辑）
+                                            const blockData = await getBlockKramdown(op.blockId);
+                                            if (blockData && blockData.kramdown) {
+                                                op.oldContent = blockData.kramdown;
+                                            }
+
+                                            // 获取Markdown格式（用于显示差异）
+                                            const mdData = await exportMdContent(
+                                                op.blockId,
+                                                false,
+                                                false,
+                                                2,
+                                                0,
+                                                false
+                                            );
+                                            if (mdData && mdData.content) {
+                                                op.oldContentForDisplay = mdData.content;
+                                            }
+
+                                            // 处理newContent用于显示（移除kramdown ID标记）
+                                            op.newContentForDisplay = op.newContent
+                                                .replace(/\{:\s*id="[^"]+"\s*\}/g, '')
+                                                .trim();
+                                        } catch (error) {
+                                            console.error(`获取块 ${op.blockId} 内容失败:`, error);
+                                        }
+                                    }
+                                    assistantMessage.editOperations = editOperations;
+
+                                    // 如果启用了自动批准，则自动应用所有编辑操作
+                                    if (autoApproveEdit) {
+                                        messages = [...messages, assistantMessage];
+                                        const currentMessageIndex = messages.length - 1;
+
+                                        for (const op of editOperations) {
+                                            await applyEditOperation(op, currentMessageIndex);
+                                        }
+
+                                        // 更新消息状态
+                                        messages = [...messages];
+                                    }
+                                }
+                            }
+
+                            if (
+                                !autoApproveEdit ||
+                                chatMode !== 'edit' ||
+                                !assistantMessage.editOperations?.length
+                            ) {
+                                messages = [...messages, assistantMessage];
+                            }
+                            streamingMessage = '';
+                            streamingThinking = '';
+                            isThinkingPhase = false;
+                            isLoading = false;
+                            abortController = null;
                             hasUnsavedChanges = true;
-                        }
-                        isLoading = false;
-                        streamingMessage = '';
-                        streamingThinking = '';
-                        isThinkingPhase = false;
-                        abortController = null;
+
+                            // AI 回复完成后，自动保存当前会话
+                            await saveCurrentSession(true);
+                        },
+                        onError: (error: Error) => {
+                            // 如果是主动中断，不显示错误
+                            if (error.message !== 'Request aborted') {
+                                // 将错误消息作为一条 assistant 消息添加
+                                const errorMessage: Message = {
+                                    role: 'assistant',
+                                    content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                };
+                                messages = [...messages, errorMessage];
+                                hasUnsavedChanges = true;
+                            }
+                            isLoading = false;
+                            streamingMessage = '';
+                            streamingThinking = '';
+                            isThinkingPhase = false;
+                            abortController = null;
+                        },
                     },
-                },
-                providerConfig.customApiUrl
-            );
+                    providerConfig.customApiUrl
+                );
+            }
         } catch (error) {
             console.error('Send message error:', error);
             // onError 回调已经处理了错误消息的添加，这里不需要重复添加
@@ -2040,6 +2341,74 @@
         );
     }
 
+    // 工具配置管理
+    async function loadToolsConfig() {
+        try {
+            const data = await plugin.loadData('agent-tools-config.json');
+            if (data?.selectedTools && Array.isArray(data.selectedTools)) {
+                selectedTools = data.selectedTools;
+            } else {
+                selectedTools = [];
+            }
+        } catch (error) {
+            console.error('[ToolConfig] Load error:', error);
+            selectedTools = [];
+        } finally {
+            // 标记配置已加载完成，此后才允许自动保存
+            isToolConfigLoaded = true;
+        }
+    }
+
+    async function saveToolsConfig() {
+        // 只在配置加载完成后才保存，避免初始化时覆盖已保存的配置
+        if (!isToolConfigLoaded) {
+            return;
+        }
+        try {
+            await plugin.saveData('agent-tools-config.json', { selectedTools });
+        } catch (error) {
+            console.error('[ToolConfig] Save error:', error);
+        }
+    }
+
+    // 监听工具选择变化，自动保存
+    $: {
+        // 只在配置加载完成后，且确实有变化时才保存
+        if (isToolConfigLoaded && selectedTools) {
+            // 使用 tick 确保在下一个事件循环保存，避免频繁保存
+            tick().then(() => {
+                saveToolsConfig();
+            });
+        }
+    }
+
+    // 获取工具的显示名称
+    function getToolDisplayName(toolName: string): string {
+        const key = `tools.${toolName}.name`;
+        const name = t(key);
+        return name === key ? toolName : name;
+    }
+
+    // 批准工具调用
+    function approveToolCall() {
+        if ((window as any).__toolApprovalResolve) {
+            (window as any).__toolApprovalResolve(true);
+            delete (window as any).__toolApprovalResolve;
+        }
+        isToolApprovalDialogOpen = false;
+        pendingToolCall = null;
+    }
+
+    // 拒绝工具调用
+    function rejectToolCall() {
+        if ((window as any).__toolApprovalResolve) {
+            (window as any).__toolApprovalResolve(false);
+            delete (window as any).__toolApprovalResolve;
+        }
+        isToolApprovalDialogOpen = false;
+        pendingToolCall = null;
+    }
+
     function usePrompt(prompt: Prompt) {
         currentInput = prompt.content;
         isPromptSelectorOpen = false;
@@ -2142,27 +2511,15 @@
                     // 在指定块之后插入（默认）
                     previousID = operation.blockId;
                 }
+                let lute = window.Lute.New();
+                let newBlockDom = lute.Md2BlockDOM(operation.newContent);
+                let newBlockId = newBlockDom.match(/data-node-id="([^"]*)"/)[1];
 
-                // 使用 insertBlock API 插入块
-                const insertResult = await insertBlock(
-                    'markdown',
-                    operation.newContent,
-                    nextID,
-                    previousID,
-                    undefined
-                );
-                await refreshSql();
-                // 获取新插入块的ID（从 doOperations 中获取）
-                const newBlockId = insertResult?.[0]?.doOperations?.[0]?.id;
-                console.log('Inserted new block ID:', newBlockId);
                 // 创建可撤回的事务
                 if (newBlockId) {
                     try {
                         const currentProtyle = getProtyle();
                         if (currentProtyle) {
-                            await refreshSql();
-                            const newBlockDomRes = await getBlockDOM(newBlockId);
-                            const newBlockDom = newBlockDomRes?.dom;
                             // 获取父块ID
                             const block = await getBlockByID(operation.blockId);
                             const parentID = block?.root_id || currentProtyle.block.id;
@@ -2195,6 +2552,9 @@
 
                             // 执行事务以支持撤回
                             currentProtyle.getInstance().transaction(doOperations, undoOperations);
+                            setTimeout(() => {
+                                currentProtyle.getInstance()?.reload(false);
+                            }, 500);
                         }
                     } catch (transactionError) {
                         console.warn('创建撤回事务失败，但块已插入:', transactionError);
@@ -2712,6 +3072,63 @@
             abortController = null;
         }
     }
+
+    // 将消息数组分组，合并连续的 AI 相关消息
+    interface MessageGroup {
+        type: 'user' | 'assistant';
+        messages: Message[];
+        startIndex: number; // 原始消息数组中的起始索引
+    }
+
+    function groupMessages(messages: Message[]): MessageGroup[] {
+        const groups: MessageGroup[] = [];
+        let currentGroup: MessageGroup | null = null;
+
+        messages.forEach((message, index) => {
+            // 跳过 system 消息
+            if (message.role === 'system') {
+                return;
+            }
+
+            if (message.role === 'user') {
+                // 用户消息：结束当前组，开始新的用户组
+                if (currentGroup) {
+                    groups.push(currentGroup);
+                }
+                currentGroup = {
+                    type: 'user',
+                    messages: [message],
+                    startIndex: index,
+                };
+            } else if (message.role === 'assistant' || message.role === 'tool') {
+                // AI 或工具消息
+                if (!currentGroup || currentGroup.type === 'user') {
+                    // 如果没有当前组或当前组是用户组，结束当前组并开始新的 AI 组
+                    if (currentGroup) {
+                        groups.push(currentGroup);
+                    }
+                    currentGroup = {
+                        type: 'assistant',
+                        messages: [message],
+                        startIndex: index,
+                    };
+                } else {
+                    // 继续添加到当前 AI 组
+                    currentGroup.messages.push(message);
+                }
+            }
+        });
+
+        // 添加最后一个组
+        if (currentGroup) {
+            groups.push(currentGroup);
+        }
+
+        return groups;
+    }
+
+    // 响应式计算消息组
+    $: messageGroups = groupMessages(messages);
 </script>
 
 <div class="ai-sidebar">
@@ -2771,199 +3188,342 @@
         on:drop={handleDrop}
         on:scroll={handleScroll}
     >
-        {#each messages as message, index (index)}
-            {#if message.role !== 'system'}
-                <div
-                    class="ai-message ai-message--{message.role}"
-                    on:contextmenu={e => handleContextMenu(e, message.content)}
-                >
-                    <div class="ai-message__header">
-                        <span class="ai-message__role">
-                            {message.role === 'user' ? '👤 User' : '🤖 AI'}
-                        </span>
-                    </div>
+        {#each messageGroups as group, groupIndex (groupIndex)}
+            {@const firstMessage = group.messages[0]}
+            {@const messageIndex = group.startIndex}
+            <div
+                class="ai-message ai-message--{group.type}"
+                on:contextmenu={e => handleContextMenu(e, firstMessage.content)}
+            >
+                <div class="ai-message__header">
+                    <span class="ai-message__role">
+                        {group.type === 'user' ? '👤 User' : '🤖 AI'}
+                    </span>
+                </div>
 
-                    <!-- 显示附件 -->
-                    {#if message.attachments && message.attachments.length > 0}
-                        <div class="ai-message__attachments">
-                            {#each message.attachments as attachment}
-                                <div class="ai-message__attachment">
-                                    {#if attachment.type === 'image'}
-                                        <img
-                                            src={attachment.data}
-                                            alt={attachment.name}
-                                            class="ai-message__attachment-image"
-                                        />
-                                        <span class="ai-message__attachment-name">
-                                            {attachment.name}
-                                        </span>
-                                    {:else}
-                                        <div class="ai-message__attachment-file">
-                                            <svg class="ai-message__attachment-icon">
-                                                <use xlink:href="#iconFile"></use>
-                                            </svg>
+                <!-- 遍历组内的所有消息 -->
+                {#each group.messages as message, msgIndex}
+                    <!-- 跳过 tool 角色的消息，因为它们已经在工具调用区域显示 -->
+                    {#if message.role === 'tool'}
+                        <!-- 不渲染 tool 消息 -->
+                    {:else}
+                        <!-- 显示附件 -->
+                        {#if message.attachments && message.attachments.length > 0}
+                            <div class="ai-message__attachments">
+                                {#each message.attachments as attachment}
+                                    <div class="ai-message__attachment">
+                                        {#if attachment.type === 'image'}
+                                            <img
+                                                src={attachment.data}
+                                                alt={attachment.name}
+                                                class="ai-message__attachment-image"
+                                            />
                                             <span class="ai-message__attachment-name">
                                                 {attachment.name}
                                             </span>
-                                        </div>
-                                    {/if}
-                                </div>
-                            {/each}
-                        </div>
-                    {/if}
-
-                    <!-- 显示思考过程 -->
-                    {#if message.role === 'assistant' && message.thinking}
-                        <div class="ai-message__thinking">
-                            <div
-                                class="ai-message__thinking-header"
-                                on:click={() => {
-                                    thinkingCollapsed[index] = !thinkingCollapsed[index];
-                                }}
-                            >
-                                <svg
-                                    class="ai-message__thinking-icon"
-                                    class:collapsed={thinkingCollapsed[index]}
-                                >
-                                    <use xlink:href="#iconRight"></use>
-                                </svg>
-                                <span class="ai-message__thinking-title">💭 思考过程</span>
-                            </div>
-                            {#if !thinkingCollapsed[index]}
-                                <div class="ai-message__thinking-content protyle-wysiwyg">
-                                    {@html formatMessage(message.thinking)}
-                                </div>
-                            {/if}
-                        </div>
-                    {/if}
-
-                    <!-- 显示消息内容 -->
-                    <div
-                        class="ai-message__content protyle-wysiwyg"
-                        style={messageFontSize ? `font-size: ${messageFontSize}px;` : ''}
-                    >
-                        {@html formatMessage(message.content)}
-                    </div>
-
-                    <!-- 显示编辑操作 -->
-                    {#if message.role === 'assistant' && message.editOperations && message.editOperations.length > 0}
-                        <div class="ai-message__edit-operations">
-                            <div class="ai-message__edit-operations-title">
-                                📝 {t('aiSidebar.edit.title')} ({message.editOperations.length})
-                            </div>
-                            {#each message.editOperations as operation}
-                                <div
-                                    class="ai-message__edit-operation"
-                                    class:ai-message__edit-operation--applied={operation.status ===
-                                        'applied'}
-                                    class:ai-message__edit-operation--rejected={operation.status ===
-                                        'rejected'}
-                                >
-                                    <div class="ai-message__edit-operation-header">
-                                        <span class="ai-message__edit-operation-id">
-                                            {#if operation.operationType === 'insert'}
-                                                {t('aiSidebar.edit.insertBlock')}:
-                                                {operation.position === 'before'
-                                                    ? t('aiSidebar.edit.before')
-                                                    : t('aiSidebar.edit.after')}
-                                                {operation.blockId}
-                                            {:else}
-                                                {t('aiSidebar.edit.blockId')}: {operation.blockId}
-                                            {/if}
-                                        </span>
-                                        <span class="ai-message__edit-operation-status">
-                                            {#if operation.status === 'applied'}
-                                                ✓ {t('aiSidebar.actions.applied')}
-                                            {:else if operation.status === 'rejected'}
-                                                ✗ {t('aiSidebar.actions.rejected')}
-                                            {:else}
-                                                ⏳ {t('aiSidebar.edit.changes')}
-                                            {/if}
-                                        </span>
-                                    </div>
-                                    <div class="ai-message__edit-operation-actions">
-                                        <!-- 查看差异按钮：所有状态都可以查看 -->
-                                        <button
-                                            class="b3-button b3-button--text"
-                                            on:click={() => viewDiff(operation)}
-                                            title={t('aiSidebar.actions.viewDiff')}
-                                        >
-                                            <svg class="b3-button__icon">
-                                                <use xlink:href="#iconEye"></use>
-                                            </svg>
-                                            {t('aiSidebar.actions.viewDiff')}
-                                        </button>
-
-                                        {#if operation.status === 'pending'}
-                                            <!-- 应用和拒绝按钮：仅在pending状态显示 -->
-                                            <button
-                                                class="b3-button b3-button--outline"
-                                                on:click={() =>
-                                                    applyEditOperation(operation, index)}
-                                                title={t('aiSidebar.actions.applyEdit')}
-                                            >
-                                                <svg class="b3-button__icon">
-                                                    <use xlink:href="#iconCheck"></use>
+                                        {:else}
+                                            <div class="ai-message__attachment-file">
+                                                <svg class="ai-message__attachment-icon">
+                                                    <use xlink:href="#iconFile"></use>
                                                 </svg>
-                                                {t('aiSidebar.actions.applyEdit')}
-                                            </button>
-                                            <button
-                                                class="b3-button b3-button--text"
-                                                on:click={() =>
-                                                    rejectEditOperation(operation, index)}
-                                                title={t('aiSidebar.actions.rejectEdit')}
-                                            >
-                                                <svg class="b3-button__icon">
-                                                    <use xlink:href="#iconClose"></use>
-                                                </svg>
-                                                {t('aiSidebar.actions.rejectEdit')}
-                                            </button>
+                                                <span class="ai-message__attachment-name">
+                                                    {attachment.name}
+                                                </span>
+                                            </div>
                                         {/if}
                                     </div>
-                                </div>
-                            {/each}
-                        </div>
-                    {/if}
+                                {/each}
+                            </div>
+                        {/if}
 
-                    <!-- 消息操作按钮 -->
-                    <div class="ai-message__actions">
-                        <button
-                            class="b3-button b3-button--text ai-message__action"
-                            on:click={() => copyMessage(message.content)}
-                            title={t('aiSidebar.actions.copyMessage')}
+                        <!-- 显示思考过程 -->
+                        {#if message.role === 'assistant' && message.thinking}
+                            {@const thinkingIndex = messageIndex + msgIndex}
+                            <div class="ai-message__thinking">
+                                <div
+                                    class="ai-message__thinking-header"
+                                    on:click={() => {
+                                        thinkingCollapsed[thinkingIndex] =
+                                            !thinkingCollapsed[thinkingIndex];
+                                    }}
+                                >
+                                    <svg
+                                        class="ai-message__thinking-icon"
+                                        class:collapsed={thinkingCollapsed[thinkingIndex]}
+                                    >
+                                        <use xlink:href="#iconRight"></use>
+                                    </svg>
+                                    <span class="ai-message__thinking-title">💭 思考过程</span>
+                                </div>
+                                {#if !thinkingCollapsed[thinkingIndex]}
+                                    <div class="ai-message__thinking-content protyle-wysiwyg">
+                                        {@html formatMessage(message.thinking)}
+                                    </div>
+                                {/if}
+                            </div>
+                        {/if}
+
+                        <!-- 显示消息内容 -->
+                        <div
+                            class="ai-message__content protyle-wysiwyg"
+                            style={messageFontSize ? `font-size: ${messageFontSize}px;` : ''}
                         >
-                            <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
-                        </button>
+                            {@html formatMessage(message.content)}
+                        </div>
+
+                        <!-- 显示工具调用 -->
+                        {#if message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0}
+                            <div class="ai-message__tool-calls">
+                                <div class="ai-message__tool-calls-title">
+                                    🔧 {t('tools.calling')} ({message.tool_calls.length})
+                                </div>
+                                {#each message.tool_calls as toolCall}
+                                    {@const toolResult = group.messages
+                                        .slice(msgIndex + 1)
+                                        .find(
+                                            m => m.role === 'tool' && m.tool_call_id === toolCall.id
+                                        )}
+                                    {@const toolName = toolCall.function.name}
+                                    {@const toolDisplayName = getToolDisplayName(toolName)}
+                                    {@const isCompleted = !!toolResult}
+                                    {@const toolCallCollapsed = !toolCallsExpanded[toolCall.id]}
+
+                                    <div class="ai-message__tool-call">
+                                        <div
+                                            class="ai-message__tool-call-header"
+                                            on:click={() => {
+                                                toolCallsExpanded[toolCall.id] =
+                                                    !toolCallsExpanded[toolCall.id];
+                                                toolCallsExpanded = { ...toolCallsExpanded };
+                                            }}
+                                        >
+                                            <div class="ai-message__tool-call-name">
+                                                <svg
+                                                    class="ai-message__tool-call-icon"
+                                                    class:collapsed={toolCallCollapsed}
+                                                >
+                                                    <use xlink:href="#iconRight"></use>
+                                                </svg>
+                                                <span>{toolDisplayName}</span>
+                                                {#if isCompleted}
+                                                    <span class="ai-message__tool-call-status">
+                                                        ✅
+                                                    </span>
+                                                {:else}
+                                                    <span class="ai-message__tool-call-status">
+                                                        ⏳
+                                                    </span>
+                                                {/if}
+                                            </div>
+                                        </div>
+
+                                        {#if !toolCallCollapsed}
+                                            <div class="ai-message__tool-call-details">
+                                                <!-- 工具参数 -->
+                                                <div class="ai-message__tool-call-params">
+                                                    <div
+                                                        class="ai-message__tool-call-section-header"
+                                                        on:click={() => {
+                                                            const key = `${toolCall.id}_params`;
+                                                            toolCallResultsExpanded[key] =
+                                                                !toolCallResultsExpanded[key];
+                                                            toolCallResultsExpanded = {
+                                                                ...toolCallResultsExpanded,
+                                                            };
+                                                        }}
+                                                    >
+                                                        <svg
+                                                            class="ai-message__tool-call-icon"
+                                                            class:collapsed={!toolCallResultsExpanded[
+                                                                `${toolCall.id}_params`
+                                                            ]}
+                                                        >
+                                                            <use xlink:href="#iconRight"></use>
+                                                        </svg>
+                                                        <strong>
+                                                            {t('tools.selector.parameters')}
+                                                        </strong>
+                                                    </div>
+                                                    {#if toolCallResultsExpanded[`${toolCall.id}_params`]}
+                                                        <pre
+                                                            class="ai-message__tool-call-code">{toolCall
+                                                                .function.arguments}</pre>
+                                                    {/if}
+                                                </div>
+
+                                                <!-- 工具结果 -->
+                                                {#if toolResult}
+                                                    <div class="ai-message__tool-call-result">
+                                                        <div
+                                                            class="ai-message__tool-call-section-header"
+                                                            on:click={() => {
+                                                                const key = `${toolCall.id}_result`;
+                                                                toolCallResultsExpanded[key] =
+                                                                    !toolCallResultsExpanded[key];
+                                                                toolCallResultsExpanded = {
+                                                                    ...toolCallResultsExpanded,
+                                                                };
+                                                            }}
+                                                        >
+                                                            <svg
+                                                                class="ai-message__tool-call-icon"
+                                                                class:collapsed={!toolCallResultsExpanded[
+                                                                    `${toolCall.id}_result`
+                                                                ]}
+                                                            >
+                                                                <use xlink:href="#iconRight"></use>
+                                                            </svg>
+                                                            <strong>{t('tools.result')}</strong>
+                                                        </div>
+                                                        {#if toolCallResultsExpanded[`${toolCall.id}_result`]}
+                                                            <pre
+                                                                class="ai-message__tool-call-code">{toolResult.content}</pre>
+                                                        {/if}
+                                                    </div>
+                                                {/if}
+                                            </div>
+                                        {/if}
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
+
+                        <!-- 显示工具调用后的最终回复 -->
+                        {#if message.role === 'assistant' && message.finalReply}
+                            <div
+                                class="ai-message__content ai-message__final-reply protyle-wysiwyg"
+                                style={messageFontSize ? `font-size: ${messageFontSize}px;` : ''}
+                            >
+                                {@html formatMessage(message.finalReply)}
+                            </div>
+                        {/if}
+
+                        <!-- 显示编辑操作 -->
+                        {#if message.role === 'assistant' && message.editOperations && message.editOperations.length > 0}
+                            <div class="ai-message__edit-operations">
+                                <div class="ai-message__edit-operations-title">
+                                    📝 {t('aiSidebar.edit.title')} ({message.editOperations.length})
+                                </div>
+                                {#each message.editOperations as operation}
+                                    <div
+                                        class="ai-message__edit-operation"
+                                        class:ai-message__edit-operation--applied={operation.status ===
+                                            'applied'}
+                                        class:ai-message__edit-operation--rejected={operation.status ===
+                                            'rejected'}
+                                    >
+                                        <div class="ai-message__edit-operation-header">
+                                            <span class="ai-message__edit-operation-id">
+                                                {#if operation.operationType === 'insert'}
+                                                    {t('aiSidebar.edit.insertBlock')}:
+                                                    {operation.position === 'before'
+                                                        ? t('aiSidebar.edit.before')
+                                                        : t('aiSidebar.edit.after')}
+                                                    {operation.blockId}
+                                                {:else}
+                                                    {t('aiSidebar.edit.blockId')}: {operation.blockId}
+                                                {/if}
+                                            </span>
+                                            <span class="ai-message__edit-operation-status">
+                                                {#if operation.status === 'applied'}
+                                                    ✓ {t('aiSidebar.actions.applied')}
+                                                {:else if operation.status === 'rejected'}
+                                                    ✗ {t('aiSidebar.actions.rejected')}
+                                                {:else}
+                                                    ⏳ {t('aiSidebar.edit.changes')}
+                                                {/if}
+                                            </span>
+                                        </div>
+                                        <div class="ai-message__edit-operation-actions">
+                                            <!-- 查看差异按钮：所有状态都可以查看 -->
+                                            <button
+                                                class="b3-button b3-button--text"
+                                                on:click={() => viewDiff(operation)}
+                                                title={t('aiSidebar.actions.viewDiff')}
+                                            >
+                                                <svg class="b3-button__icon">
+                                                    <use xlink:href="#iconEye"></use>
+                                                </svg>
+                                                {t('aiSidebar.actions.viewDiff')}
+                                            </button>
+
+                                            {#if operation.status === 'pending'}
+                                                <!-- 应用和拒绝按钮：仅在pending状态显示 -->
+                                                <button
+                                                    class="b3-button b3-button--outline"
+                                                    on:click={() =>
+                                                        applyEditOperation(
+                                                            operation,
+                                                            messageIndex + msgIndex
+                                                        )}
+                                                    title={t('aiSidebar.actions.applyEdit')}
+                                                >
+                                                    <svg class="b3-button__icon">
+                                                        <use xlink:href="#iconCheck"></use>
+                                                    </svg>
+                                                    {t('aiSidebar.actions.applyEdit')}
+                                                </button>
+                                                <button
+                                                    class="b3-button b3-button--text"
+                                                    on:click={() =>
+                                                        rejectEditOperation(
+                                                            operation,
+                                                            messageIndex + msgIndex
+                                                        )}
+                                                    title={t('aiSidebar.actions.rejectEdit')}
+                                                >
+                                                    <svg class="b3-button__icon">
+                                                        <use xlink:href="#iconClose"></use>
+                                                    </svg>
+                                                    {t('aiSidebar.actions.rejectEdit')}
+                                                </button>
+                                            {/if}
+                                        </div>
+                                    </div>
+                                {/each}
+                            </div>
+                        {/if}
+                    {/if}
+                {/each}
+
+                <!-- 消息操作按钮（组级别，只显示一次） -->
+                <div class="ai-message__actions">
+                    <button
+                        class="b3-button b3-button--text ai-message__action"
+                        on:click={() => copyMessage(firstMessage.content)}
+                        title={t('aiSidebar.actions.copyMessage')}
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
+                    </button>
+                    <button
+                        class="b3-button b3-button--text ai-message__action"
+                        on:click={() => startEditMessage(messageIndex)}
+                        title={t('aiSidebar.actions.editMessage')}
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconEdit"></use></svg>
+                    </button>
+                    <button
+                        class="b3-button b3-button--text ai-message__action"
+                        on:click={() => deleteMessage(messageIndex)}
+                        title={t('aiSidebar.actions.deleteMessage')}
+                    >
+                        <svg class="b3-button__icon">
+                            <use xlink:href="#iconTrashcan"></use>
+                        </svg>
+                    </button>
+                    {#if group.type === 'assistant'}
                         <button
                             class="b3-button b3-button--text ai-message__action"
-                            on:click={() => startEditMessage(index)}
-                            title={t('aiSidebar.actions.editMessage')}
-                        >
-                            <svg class="b3-button__icon"><use xlink:href="#iconEdit"></use></svg>
-                        </button>
-                        <button
-                            class="b3-button b3-button--text ai-message__action"
-                            on:click={() => deleteMessage(index)}
-                            title={t('aiSidebar.actions.deleteMessage')}
+                            on:click={() => regenerateMessage(messageIndex)}
+                            title={t('aiSidebar.actions.regenerate')}
                         >
                             <svg class="b3-button__icon">
-                                <use xlink:href="#iconTrashcan"></use>
+                                <use xlink:href="#iconRefresh"></use>
                             </svg>
                         </button>
-                        {#if message.role === 'assistant'}
-                            <button
-                                class="b3-button b3-button--text ai-message__action"
-                                on:click={() => regenerateMessage(index)}
-                                title={t('aiSidebar.actions.regenerate')}
-                            >
-                                <svg class="b3-button__icon">
-                                    <use xlink:href="#iconRefresh"></use>
-                                </svg>
-                            </button>
-                        {/if}
-                    </div>
+                    {/if}
                 </div>
-            {/if}
+            </div>
         {/each}
 
         {#if isLoading && (streamingMessage || streamingThinking)}
@@ -3098,6 +3658,7 @@
             >
                 <option value="ask">{t('aiSidebar.mode.ask')}</option>
                 <option value="edit">{t('aiSidebar.mode.edit')}</option>
+                <option value="agent">{t('aiSidebar.mode.agent')}</option>
             </select>
 
             <!-- 自动批准复选框（仅在编辑模式下显示） -->
@@ -3106,6 +3667,18 @@
                     <input type="checkbox" class="b3-switch" bind:checked={autoApproveEdit} />
                     <span>{t('aiSidebar.mode.autoApprove')}</span>
                 </label>
+            {/if}
+
+            <!-- Agent模式工具选择按钮 -->
+            {#if chatMode === 'agent'}
+                <button
+                    class="b3-button b3-button--text ai-sidebar__tool-selector-btn"
+                    on:click={() => (isToolSelectorOpen = !isToolSelectorOpen)}
+                    title={t('aiSidebar.agent.selectTools')}
+                >
+                    <svg class="b3-button__icon"><use xlink:href="#iconSettings"></use></svg>
+                    <span>{t('aiSidebar.agent.tools')} ({selectedTools.length})</span>
+                </button>
             {/if}
         </div>
 
@@ -3625,6 +4198,66 @@
             </div>
         </div>
     {/if}
+
+    <!-- 工具选择器对话框 -->
+    {#if isToolSelectorOpen}
+        <ToolSelector bind:selectedTools on:close={() => (isToolSelectorOpen = false)} />
+    {/if}
+
+    <!-- 工具批准对话框 -->
+    {#if isToolApprovalDialogOpen && pendingToolCall}
+        <div class="tool-approval-dialog__overlay" on:click={rejectToolCall}></div>
+        <div class="tool-approval-dialog">
+            <div class="tool-approval-dialog__header">
+                <h3>{t('tools.waitingApproval')}</h3>
+                <button
+                    class="b3-button b3-button--text"
+                    on:click={rejectToolCall}
+                    title={t('common.close')}
+                >
+                    <svg class="b3-button__icon"><use xlink:href="#iconClose"></use></svg>
+                </button>
+            </div>
+
+            <div class="tool-approval-dialog__content">
+                <div class="tool-approval-dialog__tool-info">
+                    <div class="tool-approval-dialog__tool-name">
+                        <svg class="b3-button__icon">
+                            <use xlink:href="#iconSettings"></use>
+                        </svg>
+                        <strong>{getToolDisplayName(pendingToolCall.function.name)}</strong>
+                    </div>
+                    <div class="tool-approval-dialog__tool-id">
+                        ID: {pendingToolCall.id}
+                    </div>
+                </div>
+
+                <div class="tool-approval-dialog__params">
+                    <div class="tool-approval-dialog__section-title">
+                        {t('tools.selector.parameters')}:
+                    </div>
+                    <pre class="tool-approval-dialog__code">{pendingToolCall.function
+                            .arguments}</pre>
+                </div>
+
+                <div class="tool-approval-dialog__warning">
+                    <svg class="b3-button__icon"><use xlink:href="#iconInfo"></use></svg>
+                    <span>请仔细检查参数，确认无误后再批准执行</span>
+                </div>
+            </div>
+
+            <div class="tool-approval-dialog__footer">
+                <button class="b3-button b3-button--cancel" on:click={rejectToolCall}>
+                    <svg class="b3-button__icon"><use xlink:href="#iconClose"></use></svg>
+                    {t('tools.reject')}
+                </button>
+                <button class="b3-button b3-button--primary" on:click={approveToolCall}>
+                    <svg class="b3-button__icon"><use xlink:href="#iconCheck"></use></svg>
+                    {t('tools.approve')}
+                </button>
+            </div>
+        </div>
+    {/if}
 </div>
 
 <style lang="scss">
@@ -3840,7 +4473,6 @@
         display: flex;
         align-items: center;
         gap: 4px;
-        margin-top: 8px;
         opacity: 0;
         transition: opacity 0.2s;
     }
@@ -3923,6 +4555,151 @@
         &.ai-message__thinking-content--streaming {
             animation: fadeIn 0.3s ease-out;
         }
+    }
+
+    // 工具调用样式
+    .ai-message__tool-calls {
+        border: 1px solid var(--b3-border-color);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--b3-theme-surface);
+    }
+
+    .ai-message__tool-calls-title {
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--b3-theme-on-surface);
+        background: var(--b3-theme-surface);
+        border-bottom: 1px solid var(--b3-border-color);
+    }
+
+    .ai-message__tool-call {
+        border-bottom: 1px solid var(--b3-border-color);
+
+        &:last-child {
+            border-bottom: none;
+        }
+    }
+
+    .ai-message__tool-call-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        cursor: pointer;
+        user-select: none;
+        background: var(--b3-theme-background);
+        transition: background 0.2s;
+
+        &:hover {
+            background: var(--b3-theme-primary-lightest);
+        }
+    }
+
+    .ai-message__tool-call-name {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--b3-theme-on-surface);
+    }
+
+    .ai-message__tool-call-icon {
+        width: 14px;
+        height: 14px;
+        color: var(--b3-theme-on-surface-light);
+        transition: transform 0.2s;
+        transform: rotate(90deg);
+
+        &.collapsed {
+            transform: rotate(0deg);
+        }
+    }
+
+    .ai-message__tool-call-status {
+        font-size: 14px;
+        margin-left: auto;
+    }
+
+    .ai-message__tool-call-details {
+        padding: 12px;
+        background: var(--b3-theme-background);
+        border-top: 1px solid var(--b3-border-color);
+    }
+
+    .ai-message__tool-call-params,
+    .ai-message__tool-call-result {
+        margin-bottom: 12px;
+
+        &:last-child {
+            margin-bottom: 0;
+        }
+    }
+
+    .ai-message__tool-call-section-header {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        padding: 4px;
+        margin-bottom: 6px;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+
+        &:hover {
+            background: var(--b3-list-hover);
+        }
+
+        strong {
+            font-size: 12px;
+            color: var(--b3-theme-on-surface);
+        }
+
+        .ai-message__tool-call-icon {
+            width: 12px;
+            height: 12px;
+            flex-shrink: 0;
+            transition: transform 0.2s;
+            fill: var(--b3-theme-on-surface);
+
+            &.collapsed {
+                transform: rotate(0deg);
+            }
+
+            &:not(.collapsed) {
+                transform: rotate(90deg);
+            }
+        }
+    }
+
+    .ai-message__tool-call-code {
+        margin: 0;
+        padding: 8px 12px;
+        background: var(--b3-theme-surface);
+        border: 1px solid var(--b3-border-color);
+        border-radius: 4px;
+        font-family: var(--b3-font-family-code);
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--b3-theme-on-surface);
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-x: auto;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .ai-message__tool-result-placeholder {
+        display: none;
+    }
+
+    // 工具调用后的最终回复样式
+    .ai-message__final-reply {
+        margin-top: 12px;
+        border-top: 1px solid var(--b3-border-color);
+        padding-top: 12px;
     }
 
     .ai-message__content {
@@ -4148,6 +4925,39 @@
         flex: 0 0 auto;
         min-width: 120px;
         font-size: 13px;
+    }
+
+    .ai-sidebar__auto-approve-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--b3-theme-on-surface);
+        cursor: pointer;
+        user-select: none;
+
+        span {
+            white-space: nowrap;
+        }
+    }
+
+    .ai-sidebar__tool-selector-btn {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+
+        &:hover {
+            background: var(--b3-theme-primary-lightest);
+        }
+
+        .b3-button__icon {
+            width: 14px;
+            height: 14px;
+        }
     }
 
     .ai-sidebar__input-row {
@@ -5093,6 +5903,149 @@
         gap: 8px;
         padding: 16px;
         border-top: 1px solid var(--b3-border-color);
+    }
+
+    // 工具批准对话框样式
+    .tool-approval-dialog__overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 999;
+    }
+
+    .tool-approval-dialog {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        flex-direction: column;
+        width: 90%;
+        max-width: 600px;
+        max-height: 80vh;
+        background: var(--b3-theme-background);
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        z-index: 1000;
+        overflow: hidden;
+    }
+
+    .tool-approval-dialog__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px;
+        border-bottom: 1px solid var(--b3-border-color);
+        background: var(--b3-theme-surface);
+
+        h3 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--b3-theme-on-surface);
+        }
+    }
+
+    .tool-approval-dialog__content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+    }
+
+    .tool-approval-dialog__tool-info {
+        margin-bottom: 16px;
+        padding: 12px;
+        background: var(--b3-theme-primary-lightest);
+        border-radius: 6px;
+        border: 1px solid var(--b3-theme-primary-lighter);
+    }
+
+    .tool-approval-dialog__tool-name {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+        font-size: 14px;
+        color: var(--b3-theme-on-surface);
+
+        .b3-button__icon {
+            width: 18px;
+            height: 18px;
+            color: var(--b3-theme-primary);
+        }
+
+        strong {
+            font-weight: 600;
+        }
+    }
+
+    .tool-approval-dialog__tool-id {
+        font-size: 12px;
+        color: var(--b3-theme-on-surface-light);
+        font-family: var(--b3-font-family-code);
+    }
+
+    .tool-approval-dialog__params {
+        margin-bottom: 16px;
+    }
+
+    .tool-approval-dialog__section-title {
+        margin-bottom: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--b3-theme-on-surface);
+    }
+
+    .tool-approval-dialog__code {
+        margin: 0;
+        padding: 12px;
+        background: var(--b3-theme-surface);
+        border: 1px solid var(--b3-border-color);
+        border-radius: 6px;
+        font-family: var(--b3-font-family-code);
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--b3-theme-on-surface);
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        overflow-x: auto;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .tool-approval-dialog__warning {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: var(--b3-theme-error-lightest);
+        border: 1px solid var(--b3-theme-error-lighter);
+        border-radius: 6px;
+        font-size: 13px;
+        color: var(--b3-theme-on-surface);
+
+        .b3-button__icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+            color: var(--b3-theme-error);
+        }
+    }
+
+    .tool-approval-dialog__footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 16px;
+        border-top: 1px solid var(--b3-border-color);
+        background: var(--b3-theme-surface);
+
+        .b3-button {
+            min-width: 100px;
+        }
     }
 
     // 响应式布局
