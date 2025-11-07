@@ -90,7 +90,7 @@
     function showContextMenu(event: MouseEvent, session: ChatSession) {
         event.preventDefault();
         event.stopPropagation();
-        
+
         contextMenuSession = session;
         contextMenuX = event.clientX;
         contextMenuY = event.clientY;
@@ -114,13 +114,15 @@
     // 钉住/取消钉住会话
     function togglePinSession() {
         if (!contextMenuSession) return;
-        
+
         const session = sessions.find(s => s.id === contextMenuSession.id);
         if (session) {
             session.pinned = !session.pinned;
             sessions = [...sessions];
             dispatch('update', { sessions });
-            pushMsg(session.pinned ? t('aiSidebar.session.pinned') : t('aiSidebar.session.unpinned'));
+            pushMsg(
+                session.pinned ? t('aiSidebar.session.pinned') : t('aiSidebar.session.unpinned')
+            );
         }
         // 不关闭右键菜单，让用户可以继续操作
     }
@@ -128,10 +130,10 @@
     // 导出会话到文件
     function exportSessionToFile() {
         if (!contextMenuSession) return;
-        
+
         const session = contextMenuSession;
         const markdown = generateSessionMarkdown(session);
-        
+
         // 创建下载链接
         const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
@@ -142,7 +144,7 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
+
         pushMsg(t('aiSidebar.session.exportSuccess'));
         closeContextMenu();
     }
@@ -152,13 +154,13 @@
         const header = `# ${session.title}\n\n`;
         const date = `> 创建时间：${new Date(session.createdAt).toLocaleString('zh-CN')}\n`;
         const updateDate = `> 更新时间：${new Date(session.updatedAt).toLocaleString('zh-CN')}\n\n`;
-        
+
         const messages = session.messages
             .filter(msg => msg.role !== 'system')
             .map(msg => {
                 const role = msg.role === 'user' ? '👤 **用户**' : '🤖 **助手**';
                 let content = '';
-                
+
                 if (typeof msg.content === 'string') {
                     content = msg.content;
                 } else if (Array.isArray(msg.content)) {
@@ -167,11 +169,11 @@
                         .map(part => part.text)
                         .join('\n');
                 }
-                
+
                 return `${role}\n\n${content}\n`;
             })
             .join('\n---\n\n');
-        
+
         return header + date + updateDate + messages;
     }
 
@@ -222,7 +224,9 @@
                             <div class="session-item__content">
                                 <div class="session-item__title">
                                     {#if session.pinned}
-                                        <svg class="session-item__pin-icon"><use xlink:href="#iconPin"></use></svg>
+                                        <svg class="session-item__pin-icon">
+                                            <use xlink:href="#iconPin"></use>
+                                        </svg>
                                     {/if}
                                     {session.title}
                                 </div>
@@ -254,12 +258,9 @@
 
     <!-- 右键菜单 -->
     {#if contextMenuVisible && contextMenuSession}
-        <div 
-            class="session-context-menu"
-            style="left: {contextMenuX}px; top: {contextMenuY}px;"
-        >
-            <div 
-                class="session-context-menu__item" 
+        <div class="session-context-menu" style="left: {contextMenuX}px; top: {contextMenuY}px;">
+            <div
+                class="session-context-menu__item"
                 role="button"
                 tabindex="0"
                 on:click={togglePinSession}
@@ -268,10 +269,14 @@
                 <svg class="b3-menu__icon">
                     <use xlink:href={contextMenuSession.pinned ? '#iconUnpin' : '#iconPin'}></use>
                 </svg>
-                <span>{contextMenuSession.pinned ? t('aiSidebar.session.unpin') : t('aiSidebar.session.pin')}</span>
+                <span>
+                    {contextMenuSession.pinned
+                        ? t('aiSidebar.session.unpin')
+                        : t('aiSidebar.session.pin')}
+                </span>
             </div>
-            <div 
-                class="session-context-menu__item" 
+            <div
+                class="session-context-menu__item"
                 role="button"
                 tabindex="0"
                 on:click={exportSessionToFile}
