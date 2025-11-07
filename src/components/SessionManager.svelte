@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { createEventDispatcher } from 'svelte';
+    import { createEventDispatcher, tick } from 'svelte';
     import { pushMsg } from '../api';
     import { t } from '../utils/i18n';
 
@@ -8,6 +8,12 @@
     export let isOpen = false;
 
     const dispatch = createEventDispatcher();
+    
+    // 下拉菜单位置
+    let dropdownTop = 0;
+    let dropdownLeft = 0;
+    let buttonElement: HTMLButtonElement;
+    let dropdownElement: HTMLDivElement;
 
     interface ChatSession {
         id: string;
@@ -71,7 +77,44 @@
         }
     }
 
+    // 计算下拉菜单位置
+    async function updateDropdownPosition() {
+        if (!buttonElement || !isOpen) return;
+        
+        await tick();
+        
+        const rect = buttonElement.getBoundingClientRect();
+        const dropdownWidth = dropdownElement?.offsetWidth || 320;
+        const dropdownHeight = dropdownElement?.offsetHeight || 400;
+        
+        // 计算垂直位置
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        
+        if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
+            // 显示在按钮下方
+            dropdownTop = rect.bottom + 4;
+        } else {
+            // 显示在按钮上方
+            dropdownTop = rect.top - dropdownHeight - 4;
+        }
+        
+        // 计算水平位置（右对齐）
+        dropdownLeft = rect.right - dropdownWidth;
+        
+        // 确保下拉菜单不会超出视口左边界
+        if (dropdownLeft < 8) {
+            dropdownLeft = 8;
+        }
+        
+        // 确保下拉菜单不会超出视口右边界
+        if (dropdownLeft + dropdownWidth > window.innerWidth - 8) {
+            dropdownLeft = window.innerWidth - dropdownWidth - 8;
+        }
+    }
+
     $: if (isOpen) {
+        updateDropdownPosition();
         setTimeout(() => {
             document.addEventListener('click', closeOnOutsideClick);
         }, 0);
@@ -189,6 +232,7 @@
 
 <div class="session-manager">
     <button
+        bind:this={buttonElement}
         class="session-manager__button b3-button b3-button--text"
         on:click|stopPropagation={() => (isOpen = !isOpen)}
         title={t('aiSidebar.session.title')}
@@ -197,7 +241,11 @@
     </button>
 
     {#if isOpen}
-        <div class="session-manager__dropdown">
+        <div 
+            bind:this={dropdownElement}
+            class="session-manager__dropdown" 
+            style="top: {dropdownTop}px; left: {dropdownLeft}px;"
+        >
             <div class="session-manager__header">
                 <h4>{t('aiSidebar.session.history')}</h4>
                 <button class="b3-button b3-button--primary" on:click={newSession}>
@@ -302,15 +350,12 @@
 
     .session-manager__dropdown {
         position: fixed;
-        top: auto;
-        right: 16px;
         background: var(--b3-theme-background);
         border: 1px solid var(--b3-border-color);
         border-radius: 8px;
         box-shadow: var(--b3-dialog-shadow);
-        width: 15%;
-        max-width: 320px;
-        max-height: 60%;
+        width: 320px;
+        max-height: 60vh;
         display: flex;
         flex-direction: column;
         z-index: 1000;
