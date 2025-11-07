@@ -147,10 +147,14 @@ export const AVAILABLE_TOOLS: Tool[] = [
 
 \`\`\`sql
 -- 搜索包含关键词的文档，为了查找更相关的结果，需要思考不同词，一起查询
-SELECT * FROM blocks WHERE content LIKE '%关键词%' AND type='d' LIMIT 10;
+-- 假设用户要搜索“时间管理”相关文档，需要想到“任务管理”或“GTD”等相关词。
+SELECT * FROM blocks
+WHERE (content LIKE '%时间管理%' OR content LIKE '%任务管理%' OR content LIKE '%GTD%')
+AND type='d'
+LIMIT 50;
 
 -- 获取最近更新的文档
-SELECT * FROM blocks WHERE type='d' ORDER BY updated DESC LIMIT 20;
+SELECT * FROM blocks WHERE type='d' ORDER BY updated DESC LIMIT 50;
 
 -- 统计某个笔记本的文档数量
 SELECT COUNT(*) FROM blocks WHERE box='20210808180117-6v0mkxr' AND type='d';
@@ -328,7 +332,6 @@ SELECT * FROM blocks WHERE tag LIKE '%标签名%';
 
 ## 注意事项
 - 块ID必须存在且有效
-- 返回的内容可能较大，注意token限制
 - Kramdown格式包含额外的元数据`,
             parameters: {
                 type: 'object',
