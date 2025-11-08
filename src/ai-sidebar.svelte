@@ -5866,7 +5866,7 @@
                     on:click={() => (isPromptSelectorOpen = !isPromptSelectorOpen)}
                     title={t('aiSidebar.prompt.title')}
                 >
-                    <svg class="b3-button__icon"><use xlink:href="#iconList"></use></svg>
+                    <svg class="b3-button__icon"><use xlink:href="#iconQuote"></use></svg>
                 </button>
             </div>
             {#if !(chatMode === 'ask' && enableMultiModel)}
