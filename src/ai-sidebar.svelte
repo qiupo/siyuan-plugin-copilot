@@ -2745,10 +2745,10 @@
             // 使用思源的 Lute 将 HTML 转换为 Markdown
             if (window.Lute) {
                 const lute = window.Lute.New();
-                const markdown = lute.HTML2Markdown(html);
-
+                let result = lute.HTML2Markdown(html);
+                
                 // 将Markdown写入剪贴板
-                event.clipboardData?.setData('text/plain', markdown);
+                event.clipboardData?.setData('text/plain', result[0]);
             } else {
                 // 降级：如果Lute不可用，使用纯文本
                 const text = selection.toString();
@@ -6828,7 +6828,6 @@
     }
 
     .ai-message__thinking-content {
-        padding: 12px;
         border-top: 1px solid var(--b3-border-color);
         background: var(--b3-theme-background);
         font-size: 13px;
