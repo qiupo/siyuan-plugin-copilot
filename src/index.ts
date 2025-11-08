@@ -245,7 +245,7 @@ export default class PluginSample extends Plugin {
         openTab({
             app: this.app,
             custom: {
-                title: 'AI Copilot',
+                title: 'Siyuan Copilot',
                 icon: 'iconCopilot',
                 id: tabId,
                 data: {
@@ -263,7 +263,7 @@ export default class PluginSample extends Plugin {
         const tab = openTab({
             app: this.app,
             custom: {
-                title: 'AI Copilot',
+                title: 'Siyuan Copilot',
                 icon: 'iconCopilot',
                 id: tabId,
             }

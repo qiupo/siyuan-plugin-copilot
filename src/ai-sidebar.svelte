@@ -4760,7 +4760,6 @@
 <div class="ai-sidebar">
     <div class="ai-sidebar__header">
         <h3 class="ai-sidebar__title">
-            {t('aiSidebar.title')}
             {#if hasUnsavedChanges}
                 <span class="ai-sidebar__unsaved" title={t('aiSidebar.unsavedChanges')}>●</span>
             {/if}
