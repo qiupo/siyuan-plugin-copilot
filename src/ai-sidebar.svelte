@@ -367,8 +367,7 @@
         document.addEventListener('scroll', closeContextMenu, true);
         // 添加全局复制事件监听器
         document.addEventListener('copy', handleCopyEvent);
-        // 添加全屏状态变化监听器
-        document.addEventListener('fullscreenchange', handleFullscreenChange);
+
     });
 
     onDestroy(async () => {
@@ -383,8 +382,7 @@
         document.removeEventListener('scroll', closeContextMenu, true);
         // 移除全局复制事件监听器
         document.removeEventListener('copy', handleCopyEvent);
-        // 移除全屏状态变化监听器
-        document.removeEventListener('fullscreenchange', handleFullscreenChange);
+
 
         // 保存工具配置
         if (isToolConfigLoaded) {
@@ -641,32 +639,7 @@
     // 全屏切换
     function toggleFullscreen() {
         if (!sidebarContainer) return;
-
-        if (!isFullscreen) {
-            // 进入全屏
-            if (sidebarContainer.requestFullscreen) {
-                sidebarContainer
-                    .requestFullscreen()
-                    .then(() => {
-                        isFullscreen = true;
-                    })
-                    .catch(err => {
-                        console.error('进入全屏失败:', err);
-                    });
-            }
-        } else {
-            // 退出全屏
-            if (document.exitFullscreen) {
-                document
-                    .exitFullscreen()
-                    .then(() => {
-                        isFullscreen = false;
-                    })
-                    .catch(err => {
-                        console.error('退出全屏失败:', err);
-                    });
-            }
-        }
+        isFullscreen = !isFullscreen;
     }
 
     // 滚动到底部
@@ -2276,11 +2249,7 @@
         }
     }
 
-    // 处理全屏状态变化
-    function handleFullscreenChange() {
-        isFullscreen =
-            !!document.fullscreenElement && document.fullscreenElement === sidebarContainer;
-    }
+
 
     // 使用思源内置的Lute渲染markdown为HTML
     // 将消息内容转换为字符串
@@ -9728,12 +9697,11 @@
     // 全屏模式样式
     .ai-sidebar--fullscreen {
         position: fixed !important;
-        top: 0 !important;
+        top: var(--b3-toolbar-height) !important;
         left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
         width: 100vw !important;
-        height: 100vh !important;
         z-index: 9999 !important;
         background: var(--b3-theme-background) !important;
         border: none !important;
