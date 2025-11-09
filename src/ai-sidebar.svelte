@@ -5268,20 +5268,18 @@
                                                     </div>
 
                                                     {#if response.thinking}
+                                                        {@const isCollapsed = response.thinkingCollapsed ?? true}
                                                         <div class="ai-message__thinking">
                                                             <div
                                                                 class="ai-message__thinking-header"
                                                                 on:click={() => {
-                                                                    const key = `history_multi_${messageIndex}_${msgIndex}_${index}_thinking`;
-                                                                    thinkingCollapsed[key] =
-                                                                        !thinkingCollapsed[key];
+                                                                    message.multiModelResponses[index].thinkingCollapsed = !isCollapsed;
+                                                                    messages = [...messages];
                                                                 }}
                                                             >
                                                                 <svg
                                                                     class="ai-message__thinking-icon"
-                                                                    class:collapsed={thinkingCollapsed[
-                                                                        `history_multi_${messageIndex}_${msgIndex}_${index}_thinking`
-                                                                    ]}
+                                                                    class:collapsed={isCollapsed}
                                                                 >
                                                                     <use
                                                                         xlink:href="#iconRight"
@@ -5293,7 +5291,7 @@
                                                                     💭 思考过程
                                                                 </span>
                                                             </div>
-                                                            {#if !thinkingCollapsed[`history_multi_${messageIndex}_${msgIndex}_${index}_thinking`]}
+                                                            {#if !isCollapsed}
                                                                 <div
                                                                     class="ai-message__thinking-content b3-typography"
                                                                 >
