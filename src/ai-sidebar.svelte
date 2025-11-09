@@ -1707,7 +1707,7 @@
                             onThinkingComplete: enableThinking
                                 ? (thinking: string) => {
                                       isThinkingPhase = false;
-                                      thinkingCollapsed[messages.length] = true;
+                                      thinkingCollapsed = { ...thinkingCollapsed, [messages.length]: true };
                                   }
                                 : undefined,
                             onToolCallComplete: async (toolCalls: ToolCall[]) => {
@@ -1950,7 +1950,7 @@
                         onThinkingComplete: enableThinking
                             ? (thinking: string) => {
                                   isThinkingPhase = false;
-                                  thinkingCollapsed[messages.length] = true;
+                                  thinkingCollapsed = { ...thinkingCollapsed, [messages.length]: true };
                               }
                             : undefined,
                         onChunk: async (chunk: string) => {
@@ -5782,34 +5782,17 @@
                                     </div>
                                 </div>
 
-                                {#if response.thinking}
-                                    <div class="ai-message__thinking">
-                                        <div
-                                            class="ai-message__thinking-header"
-                                            on:click={() => {
-                                                const key = `multi_${index}_thinking`;
-                                                thinkingCollapsed[key] = !thinkingCollapsed[key];
-                                            }}
-                                        >
-                                            <svg
-                                                class="ai-message__thinking-icon"
-                                                class:collapsed={thinkingCollapsed[
-                                                    `multi_${index}_thinking`
-                                                ]}
-                                            >
-                                                <use xlink:href="#iconRight"></use>
-                                            </svg>
-                                            <span class="ai-message__thinking-title">
-                                                💭 思考过程
-                                            </span>
-                                        </div>
-                                        {#if !thinkingCollapsed[`multi_${index}_thinking`]}
-                                            <div class="ai-message__thinking-content b3-typography">
-                                                {@html formatMessage(response.thinking)}
-                                            </div>
-                                        {/if}
+                            <!-- 思考过程 -->
+                            {#if response.thinking}
+                                <div class="thinking-process">
+                                    <div class="thinking-header">
+                                        <span>{t('aiSidebar.thinkingProcess')}</span>
                                     </div>
-                                {/if}
+                                    <div class="thinking-content">
+                                        {@html marked.parse(response.thinking)}
+                                    </div>
+                                </div>
+                            {/if}
 
                                 <div
                                     class="ai-sidebar__multi-model-card-content b3-typography"
