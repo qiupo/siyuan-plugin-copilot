@@ -28,6 +28,11 @@
     let expandedProviders: Set<string> = new Set();
     let selectedModelSet: Set<string> = new Set();
 
+    // DOM references for positioning
+    let buttonEl: HTMLElement | null = null;
+    let dropdownEl: HTMLElement | null = null;
+    let _resizeHandler: () => void;
+
     // 生成模型唯一键
     function getModelKey(provider: string, modelId: string): string {
         return `${provider}:::${modelId}`;
@@ -136,21 +141,73 @@
         }
     }
 
+    // 监听打开状态，绑定点击关闭以及窗口尺寸变化以调整下拉位置/高度
     $: if (isOpen) {
         setTimeout(() => {
             document.addEventListener('click', closeOnOutsideClick);
+            // initial position update
+            updateDropdownPosition();
+            // attach resize handler
+            _resizeHandler = () => updateDropdownPosition();
+            window.addEventListener('resize', _resizeHandler);
         }, 0);
     } else {
         document.removeEventListener('click', closeOnOutsideClick);
+        if (_resizeHandler) window.removeEventListener('resize', _resizeHandler);
+        // clear inline styles when closed
+        if (dropdownEl) {
+            dropdownEl.style.maxHeight = '';
+            dropdownEl.style.top = '';
+            dropdownEl.style.bottom = '';
+            dropdownEl.style.left = '';
+            dropdownEl.style.right = '';
+        }
     }
 
     onDestroy(() => {
         document.removeEventListener('click', closeOnOutsideClick);
+        if (_resizeHandler) window.removeEventListener('resize', _resizeHandler);
     });
+
+    // 根据触发按钮位置，调整下拉在窗口中的定位和最大高度，避免溢出
+    function updateDropdownPosition() {
+        if (!buttonEl || !dropdownEl) return;
+
+        const rect = buttonEl.getBoundingClientRect();
+        const margin = 8; // 与窗口边缘保留的最小距离
+
+        const availableAbove = rect.top - margin;
+        const availableBelow = window.innerHeight - rect.bottom - margin;
+
+        // 将下拉设为 fixed，方便根据视口定位
+        dropdownEl.style.position = 'fixed';
+
+        // 水平对齐：保持和触发按钮右对齐（如果空间不足则左对齐）
+        // 先尝试右对齐
+        const tryRight = window.innerWidth - rect.right;
+        dropdownEl.style.right = `${tryRight}px`;
+        dropdownEl.style.left = 'auto';
+
+        // 垂直方向：优先选择空间更大的一侧（下方或上方）
+        if (availableBelow >= availableAbove) {
+            // 在下方展开
+            dropdownEl.style.top = `${rect.bottom + margin}px`;
+            dropdownEl.style.bottom = 'auto';
+            dropdownEl.style.maxHeight = `${Math.max(80, availableBelow)}px`;
+        } else {
+            // 在上方展开（靠近触发器上方）
+            dropdownEl.style.bottom = `${window.innerHeight - rect.top + margin}px`;
+            dropdownEl.style.top = 'auto';
+            dropdownEl.style.maxHeight = `${Math.max(80, availableAbove)}px`;
+        }
+    }
+
+    
 </script>
 
 <div class="multi-model-selector">
     <button
+        bind:this={buttonEl}
         class="multi-model-selector__button b3-button b3-button--text"
         class:multi-model-selector__button--active={enableMultiModel}
         on:click|stopPropagation={() => (isOpen = !isOpen)}
@@ -169,7 +226,7 @@
     </button>
 
     {#if isOpen}
-        <div class="multi-model-selector__dropdown">
+        <div class="multi-model-selector__dropdown" bind:this={dropdownEl}>
             <div class="multi-model-selector__header">
                 <div class="multi-model-selector__title">
                     {t('multiModel.selectModels')}
@@ -290,17 +347,16 @@
     }
 
     .multi-model-selector__dropdown {
-        position: absolute;
-        bottom: 100%;
-        right: 0;
-        margin-bottom: 8px;
+        /* 使用 fixed，并通过脚本在打开时设置具体 top/bottom/left/right 与 max-height，
+           保证在视口内展开且可滚动 */
+        position: fixed;
         background: var(--b3-theme-background);
         border: 1px solid var(--b3-border-color);
         border-radius: 8px;
         box-shadow: var(--b3-dialog-shadow);
         min-width: 320px;
-        max-width: 450px;
-        max-height: 500px;
+        max-width: calc(min(450px, 90vw));
+        /* 无固定 max-height，交由脚本或内联样式控制，基础上限制为视口 */
         overflow: hidden;
         z-index: 1000;
         display: flex;
