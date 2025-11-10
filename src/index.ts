@@ -77,7 +77,7 @@ export default class PluginSample extends Plugin {
         // 注册AI侧栏
         this.addDock({
             config: {
-                position: "RightTop",
+                position: "RightBottom",
                 size: { width: 400, height: 0 },
                 icon: "iconCopilot",
                 title: "Copilot",
