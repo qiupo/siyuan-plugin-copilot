@@ -201,8 +201,6 @@
             dropdownEl.style.maxHeight = `${Math.max(80, availableAbove)}px`;
         }
     }
-
-    
 </script>
 
 <div class="multi-model-selector">
