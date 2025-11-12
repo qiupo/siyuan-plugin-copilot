@@ -275,8 +275,16 @@
     }
 
     function closeOnOutsideClick(event: MouseEvent) {
-        const target = event.target as HTMLElement;
-        if (!target.closest('.multi-model-selector')) {
+        let target = event.target as HTMLElement;
+        let found = false;
+        while (target) {
+            if (target.classList && target.classList.contains('multi-model-selector')) {
+                found = true;
+                break;
+            }
+            target = target.parentElement;
+        }
+        if (!found) {
             isOpen = false;
         }
     }
@@ -446,7 +454,7 @@
                                     <button
                                         class="multi-model-selector__move-btn"
                                         disabled={index === 0}
-                                        on:click={() => moveModelUp(index)}
+                                        on:click|stopPropagation={() => moveModelUp(index)}
                                         title={t('multiModel.moveUp')}
                                     >
                                         <svg class="multi-model-selector__move-icon">
@@ -456,7 +464,7 @@
                                     <button
                                         class="multi-model-selector__move-btn"
                                         disabled={index === selectedModels.length - 1}
-                                        on:click={() => moveModelDown(index)}
+                                        on:click|stopPropagation={() => moveModelDown(index)}
                                         title={t('multiModel.moveDown')}
                                     >
                                         <svg class="multi-model-selector__move-icon">
@@ -465,7 +473,7 @@
                                     </button>
                                     <button
                                         class="multi-model-selector__remove-btn"
-                                        on:click={() => removeModel(index)}
+                                        on:click|stopPropagation={() => removeModel(index)}
                                         title={t('multiModel.remove')}
                                     >
                                         <svg class="multi-model-selector__remove-icon">
