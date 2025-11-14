@@ -3137,9 +3137,9 @@
 
         tick().then(() => {
             try {
-                // 查找所有思源块引用链接 span[data-href^="siyuan://blocks/"]
+                // 查找所有思源块引用链接 a[href^="siyuan://blocks/"]
                 const blockRefLinks = element.querySelectorAll(
-                    'span[data-href^="siyuan://blocks/"]'
+                    'a[href^="siyuan://blocks/"]'
                 );
 
                 blockRefLinks.forEach((link: HTMLElement) => {
@@ -3157,7 +3157,7 @@
                         event.preventDefault();
                         event.stopPropagation();
 
-                        const href = link.getAttribute('data-href');
+                        const href = link.getAttribute('href');
                         if (!href) return;
 
                         // 提取块ID：siyuan://blocks/20251107164532-zmaydt9
