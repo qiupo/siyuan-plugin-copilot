@@ -1,5 +1,11 @@
 
 
+## v0.5.1 / 20251123
+- ♻️ refactor(api): 支持多种响应格式以获取模型 [#26](https://github.com/Achuan-2/siyuan-plugin-copilot/issues/26)
+
+- 尝试多种可能的响应格式以支持自定义API
+- 处理不同格式的model对象
+
 ## v0.5.0 /20251116
 - 🎨优化多模型回答思考过程不显示
 - ♻️ 把侧栏注册放在onLayoutRead
