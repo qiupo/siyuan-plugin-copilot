@@ -104,3 +104,17 @@
   display: flex;
   justify-content: center;
 }
+
+.ai-sidebar pre {
+  position: relative;
+  margin: 8px 0;
+  padding: 0 !important;
+  border-radius: 6px;
+  background: var(--b3-theme-surface);
+  border: 1px solid var(--b3-border-color);
+  box-shadow: var(--b3-tooltips-shadow);
+  overflow: hidden;
+  max-height: 600px;
+  display: flex;
+  flex-direction: column;
+}
