@@ -100,7 +100,9 @@
         if (selectedModelSet.has(key)) {
             selectedModelSet.delete(key);
             // 从selectedModels中移除
-            selectedModels = selectedModels.filter(m => !(m.provider === provider && m.modelId === modelId));
+            selectedModels = selectedModels.filter(
+                m => !(m.provider === provider && m.modelId === modelId)
+            );
         } else {
             selectedModelSet.add(key);
             // 添加到selectedModels
@@ -498,7 +500,7 @@
                                         {getProviderDisplayName(model.provider)}
                                     </span>
                                 </div>
-                                <div 
+                                <div
                                     class="multi-model-selector__selected-model-thinking"
                                     role="group"
                                     on:mousedown|stopPropagation
@@ -506,14 +508,26 @@
                                     on:keydown={() => {}}
                                 >
                                     {#if getModelCapabilities(model.provider, model.modelId)?.thinking}
-                                        <label class="multi-model-selector__thinking-toggle" title="思考模式">
+                                        <label
+                                            class="multi-model-selector__thinking-toggle"
+                                            title="思考模式"
+                                        >
                                             <input
                                                 type="checkbox"
                                                 class="b3-switch"
-                                                checked={getModelThinkingEnabled(model.provider, model.modelId)}
-                                                on:change={() => toggleModelThinking(model.provider, model.modelId)}
+                                                checked={getModelThinkingEnabled(
+                                                    model.provider,
+                                                    model.modelId
+                                                )}
+                                                on:change={() =>
+                                                    toggleModelThinking(
+                                                        model.provider,
+                                                        model.modelId
+                                                    )}
                                             />
-                                            <span class="multi-model-selector__thinking-label">思考</span>
+                                            <span class="multi-model-selector__thinking-label">
+                                                思考
+                                            </span>
                                         </label>
                                     {/if}
                                 </div>

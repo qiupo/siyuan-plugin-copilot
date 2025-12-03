@@ -517,7 +517,9 @@
                     stream: true,
                     signal: localAbort.signal,
                     customBody,
-                    enableThinking: modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false),
+                    enableThinking:
+                        modelConfig.capabilities?.thinking &&
+                        (modelConfig.thinkingEnabled || false),
                     onThinkingChunk: async (chunk: string) => {
                         thinking += chunk;
                         msg.multiModelResponses[responseIndex].thinking = thinking;
@@ -1068,12 +1070,14 @@
     }
 
     // 处理多模型中模型的思考模式切换
-    function handleToggleModelThinking(event: CustomEvent<{ provider: string; modelId: string; enabled: boolean }>) {
+    function handleToggleModelThinking(
+        event: CustomEvent<{ provider: string; modelId: string; enabled: boolean }>
+    ) {
         const { provider, modelId, enabled } = event.detail;
-        
+
         // 查找并更新 provider 中对应模型的 thinkingEnabled 设置
         let providerConfig: any = null;
-        
+
         // 检查是否是内置平台
         if (providers[provider] && !Array.isArray(providers[provider])) {
             providerConfig = providers[provider];
@@ -1139,7 +1143,7 @@
         if (!currentProvider || !currentModelId) {
             return false;
         }
-        
+
         // 从 settings 中读取最新的配置，确保数据是最新的
         const providerConfig = (() => {
             // 检查是否是自定义平台
@@ -1149,31 +1153,31 @@
             if (customProvider) {
                 return customProvider;
             }
-            
+
             // 检查是否是内置平台
             if (settings.aiProviders?.[currentProvider]) {
                 return settings.aiProviders[currentProvider];
             }
-            
+
             // 回退到 providers 对象
             if (providers[currentProvider] && !Array.isArray(providers[currentProvider])) {
                 return providers[currentProvider];
             }
-            
+
             if (providers.customProviders && Array.isArray(providers.customProviders)) {
                 return providers.customProviders.find((p: any) => p.id === currentProvider);
             }
-            
+
             return null;
         })();
-        
+
         if (!providerConfig) {
             return false;
         }
-        
+
         const modelConfig = providerConfig.models?.find((m: any) => m.id === currentModelId);
         // 只有当模型支持思考能力时，才返回 thinkingEnabled 的值
-        return modelConfig?.capabilities?.thinking ? (modelConfig.thinkingEnabled || false) : false;
+        return modelConfig?.capabilities?.thinking ? modelConfig.thinkingEnabled || false : false;
     })();
 
     // 是否显示思考模式按钮（只有支持思考的模型才显示）
@@ -1181,7 +1185,7 @@
         if (!currentProvider || !currentModelId) {
             return false;
         }
-        
+
         const providerConfig = (() => {
             const customProvider = settings.aiProviders?.customProviders?.find(
                 (p: any) => p.id === currentProvider
@@ -1189,26 +1193,26 @@
             if (customProvider) {
                 return customProvider;
             }
-            
+
             if (settings.aiProviders?.[currentProvider]) {
                 return settings.aiProviders[currentProvider];
             }
-            
+
             if (providers[currentProvider] && !Array.isArray(providers[currentProvider])) {
                 return providers[currentProvider];
             }
-            
+
             if (providers.customProviders && Array.isArray(providers.customProviders)) {
                 return providers.customProviders.find((p: any) => p.id === currentProvider);
             }
-            
+
             return null;
         })();
-        
+
         if (!providerConfig) {
             return false;
         }
-        
+
         const modelConfig = providerConfig.models?.find((m: any) => m.id === currentModelId);
         return modelConfig?.capabilities?.thinking || false;
     })();
@@ -1252,14 +1256,16 @@
 
         // 更新 settings 并保存
         // 检查是否是自定义平台（通过检查 customProviders 数组）
-        const isCustomProvider = settings.aiProviders.customProviders?.some(
-            (p: any) => p.id === currentProvider
-        ) || false;
-        
+        const isCustomProvider =
+            settings.aiProviders.customProviders?.some((p: any) => p.id === currentProvider) ||
+            false;
+
         if (isCustomProvider) {
             // 自定义平台：更新 customProviders 数组
             const customProviders = settings.aiProviders.customProviders || [];
-            const customProviderIndex = customProviders.findIndex((p: any) => p.id === currentProvider);
+            const customProviderIndex = customProviders.findIndex(
+                (p: any) => p.id === currentProvider
+            );
             if (customProviderIndex !== -1) {
                 customProviders[customProviderIndex] = { ...providerConfig };
                 settings = {
@@ -1424,7 +1430,9 @@
                         maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
                         stream: true,
                         signal: abortController.signal,
-                        enableThinking: modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false),
+                        enableThinking:
+                            modelConfig.capabilities?.thinking &&
+                            (modelConfig.thinkingEnabled || false),
                         customBody, // 传递自定义参数
                         onThinkingChunk: async (chunk: string) => {
                             thinking += chunk;
@@ -2303,7 +2311,8 @@
 
         try {
             // 检查是否启用思考模式
-            const enableThinking = modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false);
+            const enableThinking =
+                modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false);
 
             // 准备 Agent 模式的工具列表
             let toolsForAgent: any[] | undefined = undefined;
@@ -5677,7 +5686,8 @@
         }
 
         try {
-            const enableThinking = modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false);
+            const enableThinking =
+                modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false);
 
             await chat(
                 currentProvider,
