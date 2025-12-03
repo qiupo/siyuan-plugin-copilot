@@ -83,6 +83,8 @@ export interface ChatOptions {
     onError?: (error: Error) => void;
     signal?: AbortSignal; // 用于中断请求
     enableThinking?: boolean; // 是否启用思考模式
+    thinkingBudget?: number; // 思考预算（token数），-1表示动态
+    reasoningEffort?: 'low' | 'medium' | 'high' | 'auto'; // Gemini 3 系列的推理努力程度
     onThinkingChunk?: (chunk: string) => void; // 思考过程回调
     onThinkingComplete?: (thinking: string) => void; // 思考完成回调
     tools?: any[]; // Agent模式的工具列表
@@ -98,6 +100,42 @@ export interface ModelInfo {
 }
 
 export type AIProvider = 'gemini' | 'deepseek' | 'openai' | 'moonshot' | 'volcano' | 'v3' | 'custom';
+
+// Gemini 支持思考模式的模型正则表达式
+// 匹配: gemini-2.5-*, gemini-3-*, gemini-flash-latest, gemini-pro-latest 等
+export const GEMINI_THINKING_MODEL_REGEX =
+    /gemini-(?:2\.5.*(?:-latest)?|3(?:\.\d+)?-(?:flash|pro)(?:-preview)?|flash-latest|pro-latest|flash-lite-latest)(?:-[\w-]+)*$/i;
+
+/**
+ * 获取模型ID的基础名称（小写，去除提供商前缀）
+ */
+function getLowerBaseModelName(modelId: string, separator: string = '/'): string {
+    const parts = modelId.split(separator);
+    return parts[parts.length - 1].toLowerCase();
+}
+
+/**
+ * 检测模型是否是支持思考模式的 Gemini 模型
+ */
+export function isSupportedThinkingGeminiModel(modelId: string): boolean {
+    const baseModelId = getLowerBaseModelName(modelId, '/');
+    if (GEMINI_THINKING_MODEL_REGEX.test(baseModelId)) {
+        // 排除图片和语音模型
+        if (baseModelId.includes('image') || baseModelId.includes('tts')) {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * 检测模型是否是 Gemini 3 系列模型（支持 reasoning_effort 参数）
+ */
+export function isGemini3Model(modelId: string): boolean {
+    const baseModelId = getLowerBaseModelName(modelId, '/');
+    return baseModelId.includes('gemini-3');
+}
 
 interface ProviderConfig {
     name: string;
@@ -371,8 +409,29 @@ async function chatOpenAIFormat(
         requestBody.tool_choice = 'auto'; // 让模型自动决定是否调用工具
     }
 
-    // 如果启用思考模式，添加相关参数（适用于支持的模型如 DeepSeek）
+    // 如果启用思考模式，添加相关参数
     if (options.enableThinking) {
+        // 检查是否是通过 OpenAI 兼容 API 调用的 Gemini 模型
+        if (isSupportedThinkingGeminiModel(options.model)) {
+            // Gemini 3 系列使用 reasoning_effort 参数
+            // https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#openai_compatibility
+            if (isGemini3Model(options.model)) {
+                requestBody.reasoning_effort = options.reasoningEffort || 'auto';
+            } else {
+                // Gemini 2.5 等使用 google.thinking_config
+                const thinkingBudget = options.thinkingBudget ?? -1; // -1 表示动态思考
+                requestBody.extra_body = {
+                    ...requestBody.extra_body,
+                    google: {
+                        thinking_config: {
+                            thinking_budget: thinkingBudget,
+                            include_thoughts: true
+                        }
+                    }
+                };
+            }
+        }
+        // 通用的 stream_options（适用于 DeepSeek 等）
         requestBody.stream_options = {
             include_usage: true
         };
@@ -584,11 +643,17 @@ async function handleStreamResponse(
                         const json = JSON.parse(trimmed.slice(6));
                         const delta = json.choices?.[0]?.delta;
 
-                        // 检查是否有思考内容（reasoning_content）
-                        if (options.enableThinking && delta?.reasoning_content) {
+                        // 检查是否有思考内容
+                        // DeepSeek 使用 reasoning_content
+                        // Gemini OpenAI 兼容模式使用 reasoning（或 thought/thinking）
+                        const reasoningContent = delta?.reasoning_content 
+                            || delta?.reasoning 
+                            || delta?.thought 
+                            || delta?.thinking;
+                        if (options.enableThinking && reasoningContent) {
                             isThinkingPhase = true;
-                            thinkingText += delta.reasoning_content;
-                            options.onThinkingChunk?.(delta.reasoning_content);
+                            thinkingText += reasoningContent;
+                            options.onThinkingChunk?.(reasoningContent);
                         }
 
                         // 检查是否有工具调用
