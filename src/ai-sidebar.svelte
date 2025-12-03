@@ -8378,6 +8378,7 @@
         min-width: auto;
         transition: all 0.2s;
         color: var(--b3-theme-primary);
+        background: transparent;
     }
 
     .ai-sidebar__thinking-toggle:hover:not(:disabled) {
