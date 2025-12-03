@@ -66,6 +66,8 @@ export interface Message {
         isLoading: boolean;
         error?: string;
         isSelected?: boolean; // 是否被选择
+        thinkingCollapsed?: boolean; // 思考内容是否折叠
+        thinkingEnabled?: boolean; // 用户是否开启思考模式
     }>; // 多模型响应
 }
 

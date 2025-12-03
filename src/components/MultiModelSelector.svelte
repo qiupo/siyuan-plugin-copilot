@@ -42,7 +42,8 @@
         return `${provider}:::${modelId}`;
     }
 
-    // 解析模型键
+    // 解析模型键（保留以便将来使用）
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     function parseModelKey(key: string): { provider: string; modelId: string } {
         const [provider, modelId] = key.split(':::');
         return { provider, modelId };
@@ -98,13 +99,14 @@
 
         if (selectedModelSet.has(key)) {
             selectedModelSet.delete(key);
+            // 从selectedModels中移除
+            selectedModels = selectedModels.filter(m => !(m.provider === provider && m.modelId === modelId));
         } else {
             selectedModelSet.add(key);
+            // 添加到selectedModels
+            selectedModels = [...selectedModels, { provider, modelId }];
         }
         selectedModelSet = selectedModelSet;
-
-        // 更新selectedModels数组
-        selectedModels = Array.from(selectedModelSet).map(parseModelKey);
         dispatch('change', selectedModels);
     }
 
@@ -127,6 +129,26 @@
         }
 
         return providerId;
+    }
+
+    // 获取模型名称
+    function getModelName(provider: string, modelId: string): string {
+        let providerConfig: any = null;
+
+        // 查找内置平台
+        if (providers[provider] && !Array.isArray(providers[provider])) {
+            providerConfig = providers[provider];
+        } else if (providers.customProviders && Array.isArray(providers.customProviders)) {
+            // 查找自定义平台
+            providerConfig = providers.customProviders.find((p: any) => p.id === provider);
+        }
+
+        if (providerConfig && providerConfig.models) {
+            const model = providerConfig.models.find((m: any) => m.id === modelId);
+            return model ? model.name : modelId;
+        }
+
+        return modelId;
     }
 
     // 拖拽开始
@@ -248,8 +270,8 @@
         dispatch('change', selectedModels);
     }
 
-    // 获取模型名称
-    function getModelName(provider: string, modelId: string): string {
+    // 获取模型能力
+    function getModelCapabilities(provider: string, modelId: string) {
         let providerConfig: any = null;
 
         // 查找内置平台
@@ -262,10 +284,36 @@
 
         if (providerConfig && providerConfig.models) {
             const model = providerConfig.models.find((m: any) => m.id === modelId);
-            return model ? model.name : modelId;
+            return model?.capabilities;
         }
 
-        return modelId;
+        return null;
+    }
+
+    // 获取模型的 thinkingEnabled 状态（从 provider 配置中获取）
+    function getModelThinkingEnabled(provider: string, modelId: string): boolean {
+        let providerConfig: any = null;
+
+        // 查找内置平台
+        if (providers[provider] && !Array.isArray(providers[provider])) {
+            providerConfig = providers[provider];
+        } else if (providers.customProviders && Array.isArray(providers.customProviders)) {
+            // 查找自定义平台
+            providerConfig = providers.customProviders.find((p: any) => p.id === provider);
+        }
+
+        if (providerConfig && providerConfig.models) {
+            const model = providerConfig.models.find((m: any) => m.id === modelId);
+            return model?.thinkingEnabled || false;
+        }
+
+        return false;
+    }
+
+    // 切换模型思考模式（派发事件修改 provider 设置）
+    function toggleModelThinking(provider: string, modelId: string) {
+        const currentEnabled = getModelThinkingEnabled(provider, modelId);
+        dispatch('toggleThinking', { provider, modelId, enabled: !currentEnabled });
     }
 
     // 获取已选择模型的名称列表
@@ -449,6 +497,25 @@
                                     <span class="multi-model-selector__selected-model-provider">
                                         {getProviderDisplayName(model.provider)}
                                     </span>
+                                </div>
+                                <div 
+                                    class="multi-model-selector__selected-model-thinking"
+                                    role="group"
+                                    on:mousedown|stopPropagation
+                                    on:click|stopPropagation
+                                    on:keydown={() => {}}
+                                >
+                                    {#if getModelCapabilities(model.provider, model.modelId)?.thinking}
+                                        <label class="multi-model-selector__thinking-toggle" title="思考模式">
+                                            <input
+                                                type="checkbox"
+                                                class="b3-switch"
+                                                checked={getModelThinkingEnabled(model.provider, model.modelId)}
+                                                on:change={() => toggleModelThinking(model.provider, model.modelId)}
+                                            />
+                                            <span class="multi-model-selector__thinking-label">思考</span>
+                                        </label>
+                                    {/if}
                                 </div>
                                 <div class="multi-model-selector__selected-model-actions">
                                     <button
@@ -697,6 +764,7 @@
         align-items: center;
         gap: 8px;
         padding: 8px 12px;
+        min-width: 0; /* 允许内容收缩 */
     }
 
     .multi-model-selector__drag-handle {
@@ -865,10 +933,22 @@
         color: var(--b3-theme-on-surface-light);
     }
 
-    .multi-model-selector__empty {
-        padding: 20px;
-        text-align: center;
+    .multi-model-selector__selected-model-thinking {
+        flex-shrink: 0;
+    }
+
+    .multi-model-selector__thinking-toggle {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        user-select: none;
+        font-size: 11px;
         color: var(--b3-theme-on-surface-light);
-        font-size: 13px;
+    }
+
+    .multi-model-selector__thinking-label {
+        font-size: 11px;
+        color: var(--b3-theme-on-surface-light);
     }
 </style>

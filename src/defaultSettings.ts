@@ -10,7 +10,8 @@ export interface ModelConfig {
         thinking?: boolean; // 是否支持思考模式
         vision?: boolean;   // 是否支持视觉
     };
-}
+    thinkingEnabled?: boolean; // 用户是否开启思考模式（仅当支持思考时有效）
+};
 
 export interface ProviderConfig {
     apiKey: string;
