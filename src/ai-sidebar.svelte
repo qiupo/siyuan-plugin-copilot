@@ -3845,7 +3845,12 @@
                     if (anchorNode && focusNode) {
                         const anchorEl = (anchorNode as Node).parentElement;
                         const focusEl = (focusNode as Node).parentElement;
-                        if (anchorEl && focusEl && currentTarget.contains(anchorEl) && currentTarget.contains(focusEl)) {
+                        if (
+                            anchorEl &&
+                            focusEl &&
+                            currentTarget.contains(anchorEl) &&
+                            currentTarget.contains(focusEl)
+                        ) {
                             selectionInMessage = true;
                             // 获取选区的 HTML
                             const range = sel.getRangeAt(0);
@@ -3875,7 +3880,17 @@
     }
 
     // 处理右键菜单项点击
-    async function handleContextMenuAction(action: 'copy' | 'copy_md' | 'copy_plain' | 'copy_html' | 'edit' | 'delete' | 'regenerate' | 'save') {
+    async function handleContextMenuAction(
+        action:
+            | 'copy'
+            | 'copy_md'
+            | 'copy_plain'
+            | 'copy_html'
+            | 'edit'
+            | 'delete'
+            | 'regenerate'
+            | 'save'
+    ) {
         if (contextMenuMessageIndex === null) return;
 
         const messageIndex = contextMenuMessageIndex;
@@ -3915,8 +3930,13 @@
                             // 尝试写入富文本（text/html + text/plain）
                             if (navigator.clipboard && (navigator.clipboard as any).write) {
                                 const blobPlain = new Blob([selectionText], { type: 'text/plain' });
-                                const blobHtml = new Blob([selectionHtml || selectionText], { type: 'text/html' });
-                                const item: any = new ClipboardItem({ 'text/plain': blobPlain, 'text/html': blobHtml });
+                                const blobHtml = new Blob([selectionHtml || selectionText], {
+                                    type: 'text/html',
+                                });
+                                const item: any = new ClipboardItem({
+                                    'text/plain': blobPlain,
+                                    'text/html': blobHtml,
+                                });
                                 await (navigator.clipboard as any).write([item]);
                                 pushMsg(t('aiSidebar.success.copySuccess'));
                             } else {
