@@ -2,7 +2,11 @@
 ## v0.7.0 / 20251212
 
 - ✨ 右键支持选中文本，选择是复制Markdown、纯文本还是富文本，默认选中文本复制是Markdown #80
-- 🎨选择预设支持在聊天框显示名称 ([#81](https://github.com/Achuan-2/siyuan-plugin-copilot/issues/81))，感谢[@B3000Kcn](https://github.com/B3000Kcn)贡献
+  - 🎨多模型回答没选择答案时也支持复制纯文本和富文本，不显示其他按钮
+- 🎨改进模型预设：选择预设支持在聊天框显示名称 ([#81](https://github.com/Achuan-2/siyuan-plugin-copilot/issues/81))，感谢[@B3000Kcn](https://github.com/B3000Kcn)贡献
+- 🎨改进模型预设：temperatue添加一个checkbox，选择是否开启调整，如果关闭，则不应用预设的temperature值
+- 🎨支持会话重命名标题，支持AI自动设置标题  [#57](https://github.com/Achuan-2/siyuan-plugin-copilot/issues/57)
+- 🐛copilot 初始化hljs，会错误影响third-languages.js注册 [#76](https://github.com/Achuan-2/siyuan-plugin-copilot/issues/76)
 
 
 
