@@ -122,7 +122,7 @@ export default class PluginSample extends Plugin {
             icon: "iconCopilot",
             hotkey: "⌥⌘C",
             tipPosition: "n",
-            tip: t("toolbar.aiChat"),
+            tip: "AI 问答",
             click: (protyle: any) => {
                 this.openChatDialog(protyle);
             }
