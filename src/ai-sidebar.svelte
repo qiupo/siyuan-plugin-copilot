@@ -355,31 +355,37 @@
                     reasoningEffort: modelConfig.thinkingEffort || 'medium',
                     onThinkingChunk: async (chunk: string) => {
                         thinking += chunk;
-                        multiModelResponses[index].thinking = thinking;
-                        multiModelResponses = [...multiModelResponses];
+                        if (multiModelResponses[index]) {
+                            multiModelResponses[index].thinking = thinking;
+                            multiModelResponses = [...multiModelResponses];
+                        }
                     },
                     onThinkingComplete: () => {
-                        if (multiModelResponses[index].thinking) {
+                        if (multiModelResponses[index] && multiModelResponses[index].thinking) {
                             multiModelResponses[index].thinkingCollapsed = true;
                             multiModelResponses = [...multiModelResponses];
                         }
                     },
                     onChunk: async (chunk: string) => {
                         fullText += chunk;
-                        multiModelResponses[index].content = fullText;
-                        multiModelResponses = [...multiModelResponses];
+                        if (multiModelResponses[index]) {
+                            multiModelResponses[index].content = fullText;
+                            multiModelResponses = [...multiModelResponses];
+                        }
                     },
                     onComplete: async (text: string) => {
-                        multiModelResponses[index].content = convertLatexToMarkdown(text);
-                        multiModelResponses[index].thinking = thinking;
-                        multiModelResponses[index].isLoading = false;
-                        if (thinking && !multiModelResponses[index].thinkingCollapsed) {
-                            multiModelResponses[index].thinkingCollapsed = true;
+                        if (multiModelResponses[index]) {
+                            multiModelResponses[index].content = convertLatexToMarkdown(text);
+                            multiModelResponses[index].thinking = thinking;
+                            multiModelResponses[index].isLoading = false;
+                            if (thinking && !multiModelResponses[index].thinkingCollapsed) {
+                                multiModelResponses[index].thinkingCollapsed = true;
+                            }
+                            multiModelResponses = [...multiModelResponses];
                         }
-                        multiModelResponses = [...multiModelResponses];
                     },
                     onError: (error: Error) => {
-                        if (error.message !== 'Request aborted') {
+                        if (error.message !== 'Request aborted' && multiModelResponses[index]) {
                             multiModelResponses[index].error = error.message;
                             multiModelResponses[index].isLoading = false;
                             multiModelResponses = [...multiModelResponses];
@@ -390,7 +396,7 @@
                 providerConfig.advancedConfig
             );
         } catch (error) {
-            if ((error as Error).message !== 'Request aborted') {
+            if ((error as Error).message !== 'Request aborted' && multiModelResponses[index]) {
                 multiModelResponses[index].error = (error as Error).message;
                 multiModelResponses[index].isLoading = false;
                 multiModelResponses = [...multiModelResponses];
@@ -1684,36 +1690,42 @@
                         customBody, // 传递自定义参数
                         onThinkingChunk: async (chunk: string) => {
                             thinking += chunk;
-                            multiModelResponses[index].thinking = thinking;
-                            multiModelResponses = [...multiModelResponses];
+                            if (multiModelResponses[index]) {
+                                multiModelResponses[index].thinking = thinking;
+                                multiModelResponses = [...multiModelResponses];
+                            }
                         },
                         onThinkingComplete: () => {
-                            if (multiModelResponses[index].thinking) {
+                            if (multiModelResponses[index] && multiModelResponses[index].thinking) {
                                 multiModelResponses[index].thinkingCollapsed = true;
                                 multiModelResponses = [...multiModelResponses];
                             }
                         },
                         onChunk: async (chunk: string) => {
                             fullText += chunk;
-                            multiModelResponses[index].content = fullText;
-                            multiModelResponses = [...multiModelResponses];
+                            if (multiModelResponses[index]) {
+                                multiModelResponses[index].content = fullText;
+                                multiModelResponses = [...multiModelResponses];
+                            }
                         },
                         onComplete: async (text: string) => {
                             // 如果已经中断，不再处理完成回调
                             if (isAborted) {
                                 return;
                             }
-                            multiModelResponses[index].content = convertLatexToMarkdown(text);
-                            multiModelResponses[index].thinking = thinking;
-                            multiModelResponses[index].isLoading = false;
-                            if (thinking && !multiModelResponses[index].thinkingCollapsed) {
-                                multiModelResponses[index].thinkingCollapsed = true;
+                            if (multiModelResponses[index]) {
+                                multiModelResponses[index].content = convertLatexToMarkdown(text);
+                                multiModelResponses[index].thinking = thinking;
+                                multiModelResponses[index].isLoading = false;
+                                if (thinking && !multiModelResponses[index].thinkingCollapsed) {
+                                    multiModelResponses[index].thinkingCollapsed = true;
+                                }
+                                multiModelResponses = [...multiModelResponses];
                             }
-                            multiModelResponses = [...multiModelResponses];
                         },
                         onError: (error: Error) => {
                             // 如果是主动中断，不显示错误
-                            if (error.message !== 'Request aborted') {
+                            if (error.message !== 'Request aborted' && multiModelResponses[index]) {
                                 multiModelResponses[index].error = error.message;
                                 multiModelResponses[index].isLoading = false;
                                 multiModelResponses = [...multiModelResponses];
@@ -1725,7 +1737,7 @@
                 );
             } catch (error) {
                 // 如果是主动中断，不显示错误
-                if ((error as Error).message !== 'Request aborted') {
+                if ((error as Error).message !== 'Request aborted' && multiModelResponses[index]) {
                     multiModelResponses[index].error = (error as Error).message;
                     multiModelResponses[index].isLoading = false;
                     multiModelResponses = [...multiModelResponses];
