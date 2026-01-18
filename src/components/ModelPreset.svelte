@@ -61,10 +61,14 @@
     let isPresetMenuOpen = false; // 预设菜单是否打开
     let presetMenuButtonElement: HTMLElement; // 预设菜单按钮元素
     let presetMenuElement: HTMLElement; // 预设菜单元素
-    // 拖拽排序相关
+    // 拖拽排序相关（预设列表）
     let dragSrcIndex: number | null = null;
     let dragOverIndex: number | null = null;
     let dragDirection: 'above' | 'below' | null = null;
+
+    // 拖拽排序相关（模型列表）
+    let draggedModelIndex: number | null = null;
+    let dropModelIndicatorIndex: number | null = null;
 
     // 获取当前模型配置
     function getCurrentModelConfig() {
@@ -79,6 +83,51 @@
 
         if (!providerConfig) return null;
         return providerConfig.models.find((m: any) => m.id === currentModelId);
+    }
+
+    // 获取提供商显示名称
+    function getProviderDisplayName(providerId: string): string {
+        const builtInNames: Record<string, string> = {
+            gemini: 'Gemini',
+            deepseek: 'DeepSeek',
+            openai: 'OpenAI',
+            claude: 'Claude',
+            volcano: 'Volcano',
+        };
+
+        if (builtInNames[providerId]) {
+            return builtInNames[providerId];
+        }
+
+        // 查找自定义提供商
+        if (providers.customProviders && Array.isArray(providers.customProviders)) {
+            const customProvider = providers.customProviders.find((p: any) => p.id === providerId);
+            if (customProvider) {
+                return customProvider.name;
+            }
+        }
+
+        return providerId;
+    }
+
+    // 获取模型显示名称
+    function getModelDisplayName(provider: string, modelId: string): string {
+        let providerConfig: any = null;
+
+        // 查找内置平台
+        if (providers[provider] && !Array.isArray(providers[provider])) {
+            providerConfig = providers[provider];
+        } else if (providers.customProviders && Array.isArray(providers.customProviders)) {
+            // 查找自定义平台
+            providerConfig = providers.customProviders.find((p: any) => p.id === provider);
+        }
+
+        if (providerConfig && providerConfig.models) {
+            const model = providerConfig.models.find((m: any) => m.id === modelId);
+            return model ? model.name : modelId;
+        }
+
+        return modelId;
     }
 
     // 获取所有可用模型
@@ -352,6 +401,105 @@
             presets = [...presets];
             pushMsg(t('aiSidebar.modelSettings.presetUpdated'));
         }
+    }
+
+    // 模型拖拽开始
+    function handleModelDragStart(event: DragEvent, index: number) {
+        event.stopPropagation();
+        draggedModelIndex = index;
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('application/model-sort', 'true');
+        }
+    }
+
+    // 模型拖拽经过
+    function handleModelDragOver(event: DragEvent, index: number) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer) {
+            event.dataTransfer.dropEffect = 'move';
+        }
+
+        if (draggedModelIndex !== null && draggedModelIndex !== index) {
+            const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+            const y = event.clientY - rect.top;
+            const height = rect.height;
+
+            // 如果鼠标在元素的上半部分，显示在上方
+            if (y < height / 2) {
+                dropModelIndicatorIndex = index;
+            } else {
+                // 如果鼠标在元素下半部分，显示在下方
+                dropModelIndicatorIndex = index + 1;
+            }
+        }
+    }
+
+    // 模型拖拽放置
+    function handleModelDrop(event: DragEvent, dropIndex: number) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (draggedModelIndex !== null) {
+            let targetIndex = dropModelIndicatorIndex;
+
+            // 如果dropModelIndicatorIndex为null，使用传入的dropIndex
+            if (targetIndex === null) {
+                targetIndex = dropIndex;
+            }
+
+            // 确保目标索引有效
+            if (
+                targetIndex !== null &&
+                targetIndex !== draggedModelIndex &&
+                targetIndex !== draggedModelIndex + 1
+            ) {
+                // 重新排列数组
+                const newModels = [...tempSelectedModels];
+                const [draggedItem] = newModels.splice(draggedModelIndex, 1);
+
+                // 调整目标索引（因为我们已经移除了一个元素）
+                let adjustedTargetIndex = targetIndex;
+                if (targetIndex > draggedModelIndex) {
+                    adjustedTargetIndex -= 1;
+                }
+
+                newModels.splice(adjustedTargetIndex, 0, draggedItem);
+                tempSelectedModels = newModels;
+            }
+        }
+        draggedModelIndex = null;
+        dropModelIndicatorIndex = null;
+    }
+
+    // 模型拖拽结束
+    function handleModelDragEnd() {
+        draggedModelIndex = null;
+        dropModelIndicatorIndex = null;
+    }
+
+    // 上移模型
+    function moveModelUp(index: number) {
+        if (index > 0) {
+            const newModels = [...tempSelectedModels];
+            [newModels[index - 1], newModels[index]] = [newModels[index], newModels[index - 1]];
+            tempSelectedModels = newModels;
+        }
+    }
+
+    // 下移模型
+    function moveModelDown(index: number) {
+        if (index < tempSelectedModels.length - 1) {
+            const newModels = [...tempSelectedModels];
+            [newModels[index], newModels[index + 1]] = [newModels[index + 1], newModels[index]];
+            tempSelectedModels = newModels;
+        }
+    }
+
+    // 移除选中的模型
+    function removeSelectedModel(index: number) {
+        const newModels = tempSelectedModels.filter((_, i) => i !== index);
+        tempSelectedModels = newModels;
     }
 
     // 实时应用设置
@@ -944,6 +1092,110 @@
 
                     {#if tempModelSelectionEnabled}
                         <div class="model-settings-model-selector">
+                            <!-- 已选模型列表 -->
+                            {#if tempSelectedModels.length > 0}
+                                <div class="model-settings-selected-models-header">
+                                    <div class="model-settings-selected-models-title">已选模型</div>
+                                </div>
+
+                                <div class="model-settings-selected-models-list">
+                                    {#each tempSelectedModels as model, index}
+                                        <!-- Drop indicator before this item -->
+                                        {#if dropModelIndicatorIndex === index}
+                                            <div
+                                                class="model-settings-drop-indicator model-settings-drop-indicator--active"
+                                            ></div>
+                                        {/if}
+
+                                        <div
+                                            class="model-settings-selected-model"
+                                            draggable={tempEnableMultiModel}
+                                            role="button"
+                                            tabindex="0"
+                                            on:dragstart={e =>
+                                                tempEnableMultiModel &&
+                                                handleModelDragStart(e, index)}
+                                            on:dragover={e =>
+                                                tempEnableMultiModel &&
+                                                handleModelDragOver(e, index)}
+                                            on:drop={e =>
+                                                tempEnableMultiModel && handleModelDrop(e, index)}
+                                            on:dragend={tempEnableMultiModel && handleModelDragEnd}
+                                        >
+                                            <div class="model-settings-selected-model-content">
+                                                {#if tempEnableMultiModel}
+                                                    <div class="model-settings-drag-handle">
+                                                        <svg class="model-settings-drag-icon">
+                                                            <use xlink:href="#iconDrag"></use>
+                                                        </svg>
+                                                    </div>
+                                                {/if}
+                                                <div class="model-settings-selected-model-info">
+                                                    <span
+                                                        class="model-settings-selected-model-name"
+                                                    >
+                                                        {getModelDisplayName(
+                                                            model.provider,
+                                                            model.modelId
+                                                        )}
+                                                    </span>
+                                                    <span
+                                                        class="model-settings-selected-model-provider"
+                                                    >
+                                                        {getProviderDisplayName(model.provider)}
+                                                    </span>
+                                                </div>
+                                                <div class="model-settings-selected-model-actions">
+                                                    {#if tempEnableMultiModel}
+                                                        <button
+                                                            class="model-settings-move-btn"
+                                                            disabled={index === 0}
+                                                            on:click|stopPropagation={() =>
+                                                                moveModelUp(index)}
+                                                            title={t('multiModel.moveUp') || '上移'}
+                                                        >
+                                                            <svg class="model-settings-move-icon">
+                                                                <use xlink:href="#iconUp"></use>
+                                                            </svg>
+                                                        </button>
+                                                        <button
+                                                            class="model-settings-move-btn"
+                                                            disabled={index ===
+                                                                tempSelectedModels.length - 1}
+                                                            on:click|stopPropagation={() =>
+                                                                moveModelDown(index)}
+                                                            title={t('multiModel.moveDown') ||
+                                                                '下移'}
+                                                        >
+                                                            <svg class="model-settings-move-icon">
+                                                                <use xlink:href="#iconDown"></use>
+                                                            </svg>
+                                                        </button>
+                                                    {/if}
+                                                    <button
+                                                        class="model-settings-remove-btn"
+                                                        on:click|stopPropagation={() =>
+                                                            removeSelectedModel(index)}
+                                                        title={t('multiModel.remove') || '移除'}
+                                                    >
+                                                        <svg class="model-settings-remove-icon">
+                                                            <use xlink:href="#iconClose"></use>
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {/each}
+
+                                    <!-- Drop indicator after the last item -->
+                                    {#if dropModelIndicatorIndex === tempSelectedModels.length}
+                                        <div
+                                            class="model-settings-drop-indicator model-settings-drop-indicator--active"
+                                        ></div>
+                                    {/if}
+                                </div>
+                            {/if}
+
                             <!-- 多模型模式开关 -->
                             <div class="model-settings-checkbox">
                                 <input
@@ -952,6 +1204,15 @@
                                     bind:checked={tempEnableMultiModel}
                                     class="b3-switch"
                                     disabled={tempChatMode !== 'ask'}
+                                    on:change={() => {
+                                        // 关闭多模型模式时，如果有多个模型被选中，清空选择
+                                        if (
+                                            !tempEnableMultiModel &&
+                                            tempSelectedModels.length > 1
+                                        ) {
+                                            tempSelectedModels = [];
+                                        }
+                                    }}
                                 />
                                 <label
                                     for="enable-multi-model"
@@ -1554,5 +1815,135 @@
         font-size: 11px;
         color: var(--b3-theme-on-surface-light);
         font-weight: normal;
+    }
+
+    // 已选模型列表样式
+    .model-settings-selected-models-header {
+        border-bottom: 1px solid var(--b3-border-color);
+    }
+
+    .model-settings-selected-models-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--b3-theme-on-background);
+        margin-bottom: 4px;
+    }
+
+    .model-settings-selected-models-list {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .model-settings-drop-indicator {
+        height: 2px;
+        background: var(--b3-theme-primary);
+        border-radius: 1px;
+        margin: 2px 8px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+
+        &--active {
+            opacity: 1;
+        }
+    }
+
+    .model-settings-selected-model {
+        margin: 4px 0;
+        background: var(--b3-theme-background);
+        border: 1px solid var(--b3-border-color);
+        border-radius: 4px;
+        cursor: move;
+        transition: all 0.2s;
+
+        &:hover {
+            background: var(--b3-theme-surface);
+            border-color: var(--b3-theme-primary-light);
+        }
+
+        &:active {
+            transform: scale(0.98);
+        }
+    }
+
+    .model-settings-selected-model-content {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        min-width: 0;
+    }
+
+    .model-settings-drag-handle {
+        flex-shrink: 0;
+        cursor: grab;
+        color: var(--b3-theme-on-surface-light);
+
+        &:active {
+            cursor: grabbing;
+        }
+    }
+
+    .model-settings-drag-icon {
+        width: 14px;
+        height: 14px;
+    }
+
+    .model-settings-selected-model-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+    }
+
+    .model-settings-selected-model-name {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--b3-theme-on-background);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .model-settings-selected-model-provider {
+        font-size: 10px;
+        color: var(--b3-theme-on-surface-light);
+    }
+
+    .model-settings-selected-model-actions {
+        display: flex;
+        gap: 2px;
+        flex-shrink: 0;
+    }
+
+    .model-settings-move-btn,
+    .model-settings-remove-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border: none;
+        background: transparent;
+        border-radius: 3px;
+        cursor: pointer;
+        color: var(--b3-theme-on-surface-light);
+        transition: all 0.2s;
+
+        &:hover:not(:disabled) {
+            background: var(--b3-theme-surface);
+            color: var(--b3-theme-on-background);
+        }
+
+        &:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+    }
+
+    .model-settings-move-icon,
+    .model-settings-remove-icon {
+        width: 12px;
+        height: 12px;
     }
 </style>
