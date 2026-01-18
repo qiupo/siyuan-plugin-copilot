@@ -7840,6 +7840,7 @@
                     placeholder={t('aiSidebar.input.placeholder')}
                     class="ai-sidebar__input"
                     rows="1"
+                    spellcheck="false"
                 ></textarea>
                 <button
                     class="b3-button ai-sidebar__send-btn"
