@@ -9,6 +9,7 @@
             "displayAndOperation": "显示与操作",
             "noteExport": "对话导出",
             "sessionManagement": "会话管理",
+            "mcpServers": "MCP 服务器",
             "group1": "页签1",
             "group2": "页签2",
             "reset": "重置设置"
@@ -592,5 +593,13 @@
     "fullscreen": {
         "title": "全屏查看",
         "exit": "退出全屏"
+    },
+    "mcp": {
+        "name": "服务器名称",
+        "type": "类型",
+        "command": "命令",
+        "args": "参数",
+        "url": "SSE URL",
+        "env": "环境变量"
     }
 }

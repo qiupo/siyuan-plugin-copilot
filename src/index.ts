@@ -1,24 +1,10 @@
 import {
     Plugin,
-    showMessage,
-    confirm,
     Dialog,
-    Menu,
     openTab,
-    adaptHotkey,
-    getFrontend,
-    getBackend,
-    IModel,
-    Protyle,
     openWindow,
-    Constants,
-    openMobileFileById,
-    lockScreen,
-    ICard,
-    ICardData
 } from "siyuan";
 
-import { appendBlock, deleteBlock, setBlockAttrs, getBlockAttrs, pushMsg, pushErrMsg, sql, renderSprig, getChildBlocks, insertBlock, renameDocByID, prependBlock, updateBlock, createDocWithMd, getBlockKramdown, getBlockDOM } from "./api";
 import "@/index.scss";
 
 import SettingPanel from "./SettingsPannel.svelte";
@@ -274,7 +260,7 @@ export default class PluginSample extends Plugin {
         openTab({
             app: this.app,
             custom: {
-                title: 'Siyuan Copilot',
+                title: 'Siyuan Copilot dev',
                 icon: 'iconCopilot',
                 id: tabId,
                 data: {
@@ -292,7 +278,7 @@ export default class PluginSample extends Plugin {
         const tab = openTab({
             app: this.app,
             custom: {
-                title: 'Siyuan Copilot',
+                title: 'Siyuan Copilot dev',
                 icon: 'iconCopilot',
                 id: tabId,
             }

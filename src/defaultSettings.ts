@@ -30,7 +30,19 @@ export interface CustomProviderConfig extends ProviderConfig {
     name: string;
 }
 
+export interface MCPServerConfig {
+    id: string;
+    name: string;
+    type: 'stdio' | 'sse';
+    command?: string; // for stdio
+    args?: string[]; // for stdio
+    url?: string; // for sse
+    env?: Record<string, string>; // env vars
+    enabled: boolean;
+}
+
 export const getDefaultSettings = () => ({
+    mcpServers: [] as MCPServerConfig[],
     textinput: t('settings.textinput.value'),
     slider: 0.5,
     checkbox: false,

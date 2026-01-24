@@ -35,6 +35,8 @@
     "vite-plugin-zip-pack": "^1.0.5"
   },
   "dependencies": {
-    "katex": "^0.16.25"
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "katex": "^0.16.25",
+    "zod": "^4.3.6"
   }
 }

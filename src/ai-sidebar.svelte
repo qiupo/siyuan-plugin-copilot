@@ -41,7 +41,8 @@
     import { settingsStore } from './stores/settings';
     import { confirm, Constants } from 'siyuan';
     import { t } from './utils/i18n';
-    import { AVAILABLE_TOOLS, executeToolCall } from './tools';
+    import { AVAILABLE_TOOLS, executeToolCall, getAllTools, type Tool } from './tools';
+    import { mcpManager } from './libs/mcp-manager';
 
     export let plugin: any;
     export let initialMessage: string = ''; // 初始消息
@@ -56,6 +57,7 @@
         pinned?: boolean; // 是否钉住
     }
 
+    let allTools: Tool[] = [...AVAILABLE_TOOLS];
     let messages: Message[] = [];
     let currentInput = '';
     let isLoading = false;
@@ -675,6 +677,14 @@
         // 加载 Agent 模式的工具配置
         await loadToolsConfig();
 
+        // 初始化 MCP Manager
+        try {
+            await mcpManager.init(settings.mcpServers || []);
+            allTools = await getAllTools();
+        } catch (error) {
+            console.error('Failed to init MCP manager:', error);
+        }
+
         // 如果有系统提示词，添加到消息列表
         if (settings.aiSystemPrompt) {
             messages = [{ role: 'system', content: settings.aiSystemPrompt }];
@@ -691,10 +701,26 @@
         }
 
         // 订阅设置变化
-        unsubscribe = settingsStore.subscribe(newSettings => {
+        unsubscribe = settingsStore.subscribe(async newSettings => {
             if (newSettings && Object.keys(newSettings).length > 0) {
+                // 检查 MCP 配置是否变化
+                const oldMcpServers = settings.mcpServers;
+                
                 // 更新本地设置
                 settings = newSettings;
+
+                // 初始化或更新 MCP Manager
+                if (
+                    JSON.stringify(oldMcpServers) !== JSON.stringify(newSettings.mcpServers) ||
+                    (!oldMcpServers && newSettings.mcpServers)
+                ) {
+                    try {
+                        await mcpManager.init(newSettings.mcpServers || []);
+                        allTools = await getAllTools();
+                    } catch (error) {
+                        console.error('Failed to init MCP manager:', error);
+                    }
+                }
 
                 // 更新提供商信息
                 if (newSettings.aiProviders) {
@@ -2837,7 +2863,7 @@
             let toolsForAgent: any[] | undefined = undefined;
             if (chatMode === 'agent' && selectedTools.length > 0) {
                 // 根据选中的工具名称筛选出对应的工具定义
-                toolsForAgent = AVAILABLE_TOOLS.filter(tool =>
+                toolsForAgent = allTools.filter(tool =>
                     selectedTools.some(t => t.name === tool.function.name)
                 );
             }
@@ -8761,7 +8787,11 @@
 
     <!-- 工具选择器对话框 -->
     {#if isToolSelectorOpen}
-        <ToolSelector bind:selectedTools on:close={() => (isToolSelectorOpen = false)} />
+        <ToolSelector
+            bind:selectedTools
+            availableTools={allTools}
+            on:close={() => (isToolSelectorOpen = false)}
+        />
     {/if}
 
     <!-- 保存到笔记对话框 -->

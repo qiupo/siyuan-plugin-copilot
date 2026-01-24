@@ -109,7 +109,26 @@ export default defineConfig({
                 ])
             ],
 
-            external: ["siyuan", "process"],
+            external: [
+                "siyuan", 
+                "process", 
+                "node:process", 
+                "node:stream", 
+                "node:events",
+                "node:util",
+                "child_process", 
+                "fs", 
+                "path", 
+                "events", 
+                "stream",
+                "util",
+                "os",
+                "url",
+                "http",
+                "https",
+                "crypto",
+                "buffer"
+            ],
 
             output: {
                 entryFileNames: "[name].js",
