@@ -1,6 +1,7 @@
 {
     "settings": {
         "settingsPanel": "Settings Panel",
+        "mcpServers": "MCP Servers",
         "settingsGroup": {
             "ai": "AI Settings",
             "aiPlatform": "AI Platform Configuration",
@@ -9,6 +10,7 @@
             "displayAndOperation": "Display & Operation",
             "noteExport": "Chat Export",
             "sessionManagement": "Session Management",
+            "mcpServers": "MCP Servers",
             "group1": "Tab1",
             "group2": "Tab2",
             "reset": "Reset Settings"
@@ -132,6 +134,7 @@
     },
     "aiSidebar": {
         "title": "Copilot",
+        "thinkingProcess": "Thinking Process",
         "unsaved": "Unsaved",
         "unsavedChanges": "Unsaved changes",
         "mode": {
@@ -154,6 +157,10 @@
             "toolCallFailed": "Tool Call Failed",
             "viewResult": "View Result",
             "hideResult": "Hide Result"
+        },
+        "info": {
+            "noValidModel": "No valid model selected",
+            "noValidMultiModels": "No valid models available for multi-model mode"
         },
         "empty": {
             "title": "Start Conversation",
@@ -325,6 +332,7 @@
             "noCurrentDoc": "No current document found"
         },
         "errors": {
+            "noSelection": "No content selected",
             "imageOnly": "Only image files are supported",
             "imageTooLarge": "Image file too large, maximum 10MB supported",
             "textAndImageOnly": "Only text files and image files are supported",
@@ -452,6 +460,27 @@
         "collapse": "Collapse",
         "required": "Required"
     },
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "edit": "Edit",
+    "add": "Add",
+    "name": "Name",
+    "type": "Type",
+    "enable": "Enable",
+    "cancel": "Cancel",
+    "save": "Save",
+    "other": "Other",
+    "loading": "Loading...",
+    "mcp": {
+        "noServers": "No MCP servers configured",
+        "name": "Server Name",
+        "type": "Type",
+        "command": "Command",
+        "args": "Arguments",
+        "url": "SSE URL",
+        "env": "Environment Variables"
+    },
+    "delete": "Delete",
     "toolbar": {
         "aiChat": "AI Chat",
         "aiChatDialog": "AI Assistant"
@@ -496,7 +525,9 @@
             "selectAll": "Select All",
             "deselectAll": "Deselect All",
             "selected": "Selected",
-            "parameters": "Parameters"
+            "selectedCount": "{n} tools selected",
+            "parameters": "Parameters",
+            "autoApprove": "Auto Approve"
         },
         "autoApprove": {
             "label": "Auto Approve",

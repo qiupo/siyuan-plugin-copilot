@@ -310,7 +310,7 @@
             ],
         },
         {
-            name: t('settings.mcpServers') || 'MCP 服务器',
+            name: t('settings.settingsGroup.mcpServers') || 'MCP 服务配置',
             items: [],
         },
         {
@@ -730,7 +730,7 @@
                     </div>
                 {/if}
             </div>
-        {:else if focusGroup === (t('settings.mcpServers') || 'MCP 服务器')}
+        {:else if focusGroup === (t('settings.settingsGroup.mcpServers') || 'MCP 服务配置')}
             <div class="config__tab-container_plugin">
                 <MCPServerManager
                     mcpServers={settings.mcpServers || []}

@@ -21,7 +21,6 @@
         exportMdContent,
         openBlock,
         updateBlock,
-        insertBlock,
         getBlockDOM,
         getBlockKramdown,
         getBlockByID,
@@ -682,7 +681,7 @@
             await mcpManager.init(settings.mcpServers || []);
             allTools = await getAllTools();
         } catch (error) {
-            console.error('Failed to init MCP manager:', error);
+            console.error('Failed to load tools:', error);
         }
 
         // 如果有系统提示词，添加到消息列表
@@ -718,7 +717,7 @@
                         await mcpManager.init(newSettings.mcpServers || []);
                         allTools = await getAllTools();
                     } catch (error) {
-                        console.error('Failed to init MCP manager:', error);
+                        console.error('Failed to update tools:', error);
                     }
                 }
 

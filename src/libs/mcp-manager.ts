@@ -1,3 +1,4 @@
+import { pushErrMsg, pushMsg } from "../api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -7,6 +8,7 @@ import type { Tool } from "../tools";
 export class MCPManager {
     private clients: Map<string, Client> = new Map();
     private configs: MCPServerConfig[] = [];
+    private toolServerMap: Map<string, { serverId: string, originalName: string }> = new Map();
 
     constructor() {}
 
@@ -21,6 +23,8 @@ export class MCPManager {
                     await this.connect(config);
                 } catch (e) {
                     console.error(`Failed to connect to MCP server ${config.name}:`, e);
+                    const errorMsg = e instanceof Error ? e.message : String(e);
+                    pushErrMsg(`Failed to connect to MCP server ${config.name}: ${errorMsg}`);
                 }
             }
         }
@@ -55,61 +59,100 @@ export class MCPManager {
         await client.connect(transport);
         this.clients.set(config.id, client);
         console.log(`Connected to MCP server: ${config.name}`);
+        pushMsg(`Connected to MCP server: ${config.name}`);
     }
 
     public async getTools(): Promise<Tool[]> {
+        const tempMap = new Map<string, { serverId: string, originalName: string }>();
         const allTools: Tool[] = [];
         for (const [id, client] of this.clients.entries()) {
             try {
                 const result = await client.listTools();
                 const serverConfig = this.configs.find(c => c.id === id);
-                // Use a safer separator or namespace strategy if needed
-                // Here we use "__" as separator to avoid conflict with tool names
-                const prefix = serverConfig ? `mcp__${serverConfig.name}__` : 'mcp__unknown__';
                 
-                const tools: Tool[] = result.tools.map(t => ({
-                    type: 'function',
-                    function: {
-                        name: `${prefix}${t.name}`,
-                        description: t.description || '',
-                        parameters: {
-                            type: 'object',
-                            properties: t.inputSchema.properties || {},
-                            required: t.inputSchema.required || []
-                        } as any
+                const tools: Tool[] = result.tools.map(t => {
+                    let toolName = `mcp__${t.name}`;
+                    // Handle naming conflicts
+                    if (tempMap.has(toolName)) {
+                        toolName = `mcp__${t.name}__${serverConfig?.name || 'unknown'}`;
                     }
-                }));
+
+                    tempMap.set(toolName, { 
+                        serverId: id, 
+                        originalName: t.name 
+                    });
+
+                    return {
+                        type: 'function',
+                        function: {
+                            name: toolName,
+                            description: t.description || '',
+                            parameters: {
+                                type: 'object',
+                                properties: t.inputSchema.properties || {},
+                                required: t.inputSchema.required || []
+                            } as any
+                        },
+                        _mcpServerName: serverConfig?.name
+                    } as any as Tool;
+                });
+                console.log('tools',tools)
                 allTools.push(...tools);
             } catch (e) {
                 console.error(`Failed to list tools for client ${id}:`, e);
             }
         }
+        this.toolServerMap = tempMap;
         return allTools;
     }
 
     public async callTool(name: string, args: any): Promise<string> {
-        // Parse the tool name to find the server
-        // Format: mcp__SERVERNAME__TOOLNAME
-        const match = name.match(/^mcp__(.+?)__(.+)$/);
-        if (!match) {
-             throw new Error(`Invalid MCP tool name format: ${name}`);
-        }
+        // Look up server and original tool name
+        let info = this.toolServerMap.get(name);
 
-        const [_, serverName, toolName] = match;
+        // If not found, try to refresh tools list first
+        if (!info) {
+            console.log(`MCP tool ${name} not found in cache, refreshing tools list...`);
+            await this.getTools();
+            info = this.toolServerMap.get(name);
+        }
         
-        const config = this.configs.find(c => c.name === serverName);
-        if (!config) {
-            throw new Error(`MCP server not found for tool: ${name}`);
+        // If not found in map, try to parse old format as fallback (optional, but good for robustness if map is empty)
+        let serverId: string | undefined;
+        let toolName: string;
+
+        if (info) {
+            serverId = info.serverId;
+            toolName = info.originalName;
+        } else {
+            // Fallback: try to parse mcp__SERVER__TOOL
+            // This might be risky if we changed naming convention, but let's keep it as backup
+            // or maybe we should just fail. 
+            // Given the user wants to remove server name from prefix, relying on regex is unreliable now.
+            // But let's check if it matches the OLD pattern just in case.
+            const match = name.match(/^mcp__(.+?)__(.+)$/);
+            if (match) {
+                const [_, serverName, tName] = match;
+                const config = this.configs.find(c => c.name === serverName);
+                if (config) {
+                    serverId = config.id;
+                    toolName = tName;
+                }
+            }
         }
 
-        const client = this.clients.get(config.id);
+        if (!serverId) {
+             throw new Error(`MCP tool not registered or found: ${name}`);
+        }
+
+        const client = this.clients.get(serverId);
         if (!client) {
-            throw new Error(`MCP client not connected for server: ${serverName}`);
+            throw new Error(`MCP client not connected for server ID: ${serverId}`);
         }
 
         try {
             const result = await client.callTool({
-                name: toolName,
+                name: toolName!,
                 arguments: args
             });
             

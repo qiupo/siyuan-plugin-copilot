@@ -1874,6 +1874,7 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
  * 获取所有可用工具（包括原生工具和 MCP 工具）
  */
 export async function getAllTools(): Promise<Tool[]> {
-    const mcpTools = mcpManager.getTools();
-    return [...AVAILABLE_TOOLS, ...await mcpTools];
+    const mcpTools = await mcpManager.getTools();
+    console.log('mcpTools',mcpTools)
+    return [...AVAILABLE_TOOLS, ... mcpTools];
 }

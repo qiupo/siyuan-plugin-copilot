@@ -6,17 +6,17 @@
 </script>
 
 <script lang="ts">
-    import { createEventDispatcher } from 'svelte';
-    import { AVAILABLE_TOOLS, type Tool } from '../tools';
+    import { createEventDispatcher, onMount } from 'svelte';
+    import { getAllTools, type Tool } from '../tools';
     import { t } from '../utils/i18n';
 
     export let selectedTools: ToolConfig[] = [];
-    export let availableTools: Tool[] = AVAILABLE_TOOLS;
 
     const dispatch = createEventDispatcher();
 
     // 使用本地状态管理选中工具，避免双向绑定的问题
     let localSelectedTools: ToolConfig[] = [...selectedTools];
+    let loading = true;
 
     // 当外部 selectedTools 改变时，同步到本地状态
     $: if (selectedTools) {
@@ -26,7 +26,8 @@
     function close() {
         dispatch('close');
     }
-    const toolCategories = {
+
+    let toolCategories: Record<string, { name: string; tools?: string[] }> = {
         siyuan: {
             name: t('tools.category.siyuan'),
             tools: [
@@ -49,36 +50,77 @@
 
     // 按类别组织工具
     let categorizedTools: Record<string, Tool[]> = {};
-    
-    $: {
-        categorizedTools = {};
-        // SiYuan tools
-        categorizedTools['siyuan'] = toolCategories.siyuan.tools
-            .map(toolName => availableTools.find(tool => tool.function.name === toolName))
-            .filter(tool => tool !== undefined) as Tool[];
 
-        // MCP tools
-        const mcpTools = availableTools.filter(t => t.function.name.startsWith('mcp__'));
-        
-        // Group MCP tools by server name if possible (mcp__SERVER__TOOL)
-        const mcpGroups: Record<string, Tool[]> = {};
-        mcpTools.forEach(tool => {
-            const match = tool.function.name.match(/^mcp__(.+?)__/);
-            const serverName = match ? match[1] : 'other';
-            if (!mcpGroups[serverName]) mcpGroups[serverName] = [];
-            mcpGroups[serverName].push(tool);
-        });
+    onMount(async () => {
+        try {
+            const allTools = await getAllTools();
 
-        for (const [server, tools] of Object.entries(mcpGroups)) {
-             categorizedTools[`mcp_${server}`] = tools;
+            // 1. 处理 SiYuan 工具
+            const siyuanTools = allTools.filter(t => !t.function.name.startsWith('mcp__'));
+            // 按照预定义顺序排序
+            const siyuanOrder = toolCategories.siyuan.tools || [];
+            categorizedTools['siyuan'] = siyuanOrder
+                .map(name => siyuanTools.find(t => t.function.name === name))
+                .filter(t => t !== undefined) as Tool[];
+            
+            // 添加未在列表中定义的其他原生工具（如果有）
+            const otherSiyuanTools = siyuanTools.filter(t => !siyuanOrder.includes(t.function.name));
+            if (otherSiyuanTools.length > 0) {
+                categorizedTools['siyuan'].push(...otherSiyuanTools);
+            }
+
+            // 2. 处理 MCP 工具
+            const mcpTools = allTools.filter(t => t.function.name.startsWith('mcp__'));
+            
+            // 按服务器分组
+            const mcpGroups: Record<string, Tool[]> = {};
+            for (const tool of mcpTools) {
+                // 尝试从隐藏属性获取服务器名称
+                // 注意：Tool 类型定义没有 _mcpServerName，需要强制转换
+                const serverName = (tool as any)._mcpServerName;
+                
+                if (serverName) {
+                    if (!mcpGroups[serverName]) {
+                        mcpGroups[serverName] = [];
+                    }
+                    mcpGroups[serverName].push(tool);
+                } else {
+                    // 兼容旧格式或无服务器信息的工具
+                    const match = tool.function.name.match(/^mcp__(.+?)__(.+)$/);
+                    if (match) {
+                        const sName = match[1];
+                        if (!mcpGroups[sName]) {
+                            mcpGroups[sName] = [];
+                        }
+                        mcpGroups[sName].push(tool);
+                    } else {
+                        // 处理格式不匹配的工具
+                        if (!mcpGroups['other']) {
+                            mcpGroups['other'] = [];
+                        }
+                        mcpGroups['other'].push(tool);
+                    }
+                }
+            }
+
+            // 添加 MCP 分组到 categorizedTools 和 toolCategories
+            for (const [serverName, tools] of Object.entries(mcpGroups)) {
+                const categoryKey = `mcp_${serverName}`;
+                categorizedTools[categoryKey] = tools;
+                toolCategories[categoryKey] = {
+                    name: `MCP: ${serverName === 'other' ? t('other') || 'Other' : serverName}`
+                };
+            }
+            
+            // 触发更新
+            toolCategories = toolCategories;
+            categorizedTools = categorizedTools;
+
+            // 检查是否有选中的工具在当前列表中不存在（可能是已禁用的 MCP 工具），如果需要可以处理
+        } finally {
+            loading = false;
         }
-    }
-
-    function getCategoryName(key: string): string {
-        if (key === 'siyuan') return toolCategories.siyuan.name;
-        if (key.startsWith('mcp_')) return `MCP: ${key.substring(4)}`;
-        return key;
-    }
+    });
 
     // 切换工具选择
     function toggleTool(toolName: string) {
@@ -114,292 +156,470 @@
         dispatch('update', localSelectedTools);
     }
 
+    // 计算当前所有可用工具
+    $: allCurrentTools = Object.values(categorizedTools).flat();
+
     // 全选/取消全选
     function toggleAll() {
-        if (localSelectedTools.length === availableTools.length) {
+        const allSelected = allCurrentTools.length > 0 && allCurrentTools.every(t => 
+            localSelectedTools.some(selected => selected.name === t.function.name)
+        );
+
+        if (allSelected) {
             // 取消全选
             localSelectedTools = [];
         } else {
             // 全选
-            localSelectedTools = availableTools.map(tool => ({
+            localSelectedTools = allCurrentTools.map(tool => ({
                 name: tool.function.name,
-                autoApprove: false
+                autoApprove: false,
             }));
         }
+        // 同步到导出 prop 以支持 bind:selectedTools
         selectedTools = [...localSelectedTools];
+        // 通知父组件更新
         dispatch('update', localSelectedTools);
     }
-    
+
+    // 检查工具是否被选中
     function isToolSelected(toolName: string): boolean {
         return localSelectedTools.some(t => t.name === toolName);
     }
 
-    function isToolAutoApprove(toolName: string): boolean {
-        return localSelectedTools.find(t => t.name === toolName)?.autoApprove || false;
+    // 获取工具的自动批准状态
+    function getToolAutoApprove(toolName: string): boolean {
+        const tool = localSelectedTools.find(t => t.name === toolName);
+        return tool?.autoApprove || false;
+    }
+
+    // 为了让模板能可靠地响应选中状态变化，维护两个响应式集合
+    $: selectedSet = new Set(localSelectedTools.map(t => t.name));
+    $: autoApproveMap = new Map(localSelectedTools.map(t => [t.name, t.autoApprove]));
+
+    // 获取工具的友好名称
+    function getToolDisplayName(toolName: string): string {
+        const key = `tools.${toolName}.name`;
+        const name = t(key);
+        return name === key ? toolName : name;
+    }
+
+    // 获取工具的简短描述
+    function getToolShortDescription(tool: Tool): string {
+        const description = tool.function.description;
+        const firstLine = description.split('\n')[0];
+        return firstLine || description.substring(0, 50) + '...';
+    }
+
+    // 展开/折叠详情
+    let expandedTools: Set<string> = new Set();
+    function toggleExpand(toolName: string) {
+        if (expandedTools.has(toolName)) {
+            expandedTools.delete(toolName);
+        } else {
+            expandedTools.add(toolName);
+        }
+        expandedTools = expandedTools;
     }
 </script>
 
-<div class="tool-selector-overlay" on:click={close} on:keydown={(e) => e.key === 'Escape' && close()} role="button" tabindex="0">
-    <div class="tool-selector-modal" on:click|stopPropagation role="button" tabindex="0" on:keydown|stopPropagation>
-        <div class="modal-header">
-            <h3>{t('tools.selector.title')}</h3>
-            <div class="header-actions">
-                <button class="b3-button b3-button--text" on:click={toggleAll}>
-                    {localSelectedTools.length === availableTools.length ? t('tools.selector.deselectAll') : t('tools.selector.selectAll')}
-                </button>
-                <button class="icon-button" on:click={close}>
-                    <svg class="icon">
-                        <use xlink:href="#iconClose"></use>
-                    </svg>
-                </button>
-            </div>
+<div class="tool-selector__overlay" on:click={close}></div>
+<div class="tool-selector">
+    <div class="tool-selector__header">
+        <h3>{t('tools.selector.title')}</h3>
+        <div class="tool-selector__actions">
+            <button class="b3-button b3-button--text" on:click={toggleAll}>
+                {allCurrentTools.length > 0 && allCurrentTools.every(t => localSelectedTools.some(s => s.name === t.function.name))
+                    ? t('tools.selector.deselectAll')
+                    : t('tools.selector.selectAll')}
+            </button>
+            <button class="b3-button b3-button--cancel" on:click={close}>
+                {t('common.close')}
+            </button>
         </div>
-        <div class="modal-content">
-            {#each Object.entries(categorizedTools) as [category, tools]}
-                {#if tools.length > 0}
-                    <div class="tool-category">
-                        <div class="category-title">{getCategoryName(category)}</div>
-                        <div class="tool-list">
-                            {#each tools as tool}
-                                <div class="tool-item" class:selected={isToolSelected(tool.function.name)}>
-                                    <div class="tool-main" on:click={() => toggleTool(tool.function.name)} role="button" tabindex="0" on:keydown={(e) => e.key === 'Enter' && toggleTool(tool.function.name)}>
-                                        <div class="tool-checkbox">
-                                            {#if isToolSelected(tool.function.name)}
-                                                <svg class="icon"><use xlink:href="#iconCheck"></use></svg>
-                                            {/if}
-                                        </div>
-                                        <div class="tool-info">
-                                            <div class="tool-name">{tool.function.name}</div>
-                                            <div class="tool-desc">{tool.function.description.split('\n')[0]}</div>
-                                        </div>
-                                    </div>
-                                    <div 
-                                        class="tool-auto-approve" 
-                                        class:active={isToolAutoApprove(tool.function.name)}
-                                        on:click|stopPropagation={() => toggleToolAutoApprove(tool.function.name)}
-                                        title={t('tools.selector.autoApprove')}
-                                        role="button"
-                                        tabindex="0"
-                                        on:keydown|stopPropagation
-                                    >
-                                        <svg class="icon"><use xlink:href="#iconFlash"></use></svg>
+    </div>
+
+    <div class="tool-selector__content">
+        <div class="tool-selector__info">
+            <svg class="svg"><use xlink:href="#iconInfo"></use></svg>
+            <span>{t('tools.selector.info')}</span>
+        </div>
+
+        {#if loading}
+            <div class="tool-selector__loading">
+                <span>{t('loading') || 'Loading...'}</span>
+            </div>
+        {:else}
+            {#each Object.entries(categorizedTools) as [category, tools] (category)}
+                <div class="tool-category">
+                    <h4 class="tool-category__title">{toolCategories[category]?.name || category}</h4>
+                    <div class="tool-list">
+                        {#each tools as tool (tool.function.name)}
+                            {@const toolName = tool.function.name}
+                            {@const isExpanded = expandedTools.has(toolName)}
+
+                            <div
+                                class="tool-item"
+                                class:tool-item--selected={selectedSet.has(toolName)}
+                            >
+                                <div class="tool-item__header">
+                                    <label class="tool-item__checkbox">
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedSet.has(toolName)}
+                                            on:change={() => toggleTool(toolName)}
+                                        />
+                                        <span class="tool-item__name">
+                                            {getToolDisplayName(toolName)}
+                                        </span>
+                                    </label>
+                                    <div class="tool-item__header-right">
+                                        <label
+                                            class="tool-item__auto-approve"
+                                            title={t('tools.autoApprove.tooltip')}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                class="b3-switch"
+                                                checked={autoApproveMap.get(toolName) || false}
+                                                on:change={() => toggleToolAutoApprove(toolName)}
+                                            />
+                                            <span class="tool-item__auto-approve-text">
+                                                {t('tools.autoApprove.label')}
+                                            </span>
+                                        </label>
+                                        <button
+                                            class="tool-item__expand b3-button b3-button--text"
+                                            on:click={() => toggleExpand(toolName)}
+                                            title={isExpanded
+                                                ? t('common.collapse')
+                                                : t('common.expand')}
+                                        >
+                                            <svg
+                                                class="svg"
+                                                class:tool-item__expand--rotated={isExpanded}
+                                            >
+                                                <use xlink:href="#iconRight"></use>
+                                            </svg>
+                                        </button>
                                     </div>
                                 </div>
-                            {/each}
-                        </div>
+
+                                <div class="tool-item__description">
+                                    {getToolShortDescription(tool)}
+                                </div>
+
+                                {#if isExpanded}
+                                    <div class="tool-item__details">
+                                        <pre class="tool-item__full-description">{tool.function
+                                                .description}</pre>
+
+                                        <div class="tool-item__parameters">
+                                            <strong>{t('tools.selector.parameters')}:</strong>
+                                            <ul>
+                                                {#each Object.entries(tool.function.parameters.properties) as [paramName, param]}
+                                                    <li>
+                                                        <code>{paramName}</code>
+                                                        {#if tool.function.parameters.required.includes(paramName)}
+                                                            <span class="tool-item__required">
+                                                                ({t('common.required')})
+                                                            </span>
+                                                        {/if}
+                                                        : {param.description}
+                                                    </li>
+                                                {/each}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                {/if}
+                            </div>
+                        {/each}
                     </div>
-                {/if}
+                </div>
             {/each}
-        </div>
-        <div class="modal-footer">
-            <div class="selected-count">
-                {t('tools.selector.selectedCount').replace('{n}', localSelectedTools.length.toString())}
+        {/if}
+    </div>
+
+    <div class="tool-selector__footer">
+        <div class="tool-selector__footer-left">
+            <div class="tool-selector__footer-info">
+                <svg class="svg"><use xlink:href="#iconInfo"></use></svg>
+                <span>{t('tools.autoApprove.footerInfo')}</span>
             </div>
-            <button class="b3-button" on:click={close}>{t('common.confirm')}</button>
         </div>
+        <span class="tool-selector__count">
+            {t('tools.selector.selected')}: {localSelectedTools.length}/{allCurrentTools.length}
+        </span>
     </div>
 </div>
 
 <style lang="scss">
-    .tool-selector-overlay {
+    .tool-selector__overlay {
         position: fixed;
         top: 0;
         left: 0;
         right: 0;
         bottom: 0;
         background: rgba(0, 0, 0, 0.5);
-        z-index: 1000;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        z-index: 999;
     }
 
-    .tool-selector-modal {
-        background: var(--b3-theme-background);
-        border-radius: 6px;
-        box-shadow: var(--b3-dialog-shadow);
-        width: 600px;
-        max-width: 90vw;
-        max-height: 80vh;
+    .tool-selector {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
         display: flex;
         flex-direction: column;
-        border: 1px solid var(--b3-border-color);
-    }
+        width: 90%;
+        max-width: 700px;
+        max-height: 80vh;
+        background: var(--b3-theme-background);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        z-index: 1000;
 
-    .modal-header {
-        padding: 16px;
-        border-bottom: 1px solid var(--b3-border-color);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+        &__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            border-bottom: 1px solid var(--b3-theme-surface-lighter);
 
-        h3 {
-            margin: 0;
-            font-size: 16px;
-            font-weight: 600;
+            h3 {
+                margin: 0;
+                font-size: 16px;
+                font-weight: 500;
+            }
         }
 
-        .header-actions {
+        &__actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        &__content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+
+        &__info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            margin-bottom: 16px;
+            background: var(--b3-theme-primary-lightest);
+            border-radius: 4px;
+            font-size: 13px;
+            color: var(--b3-theme-on-surface);
+
+            .svg {
+                width: 16px;
+                height: 16px;
+                flex-shrink: 0;
+            }
+        }
+
+        &__footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-top: 1px solid var(--b3-theme-surface-lighter);
+            font-size: 13px;
+            color: var(--b3-theme-on-surface-light);
+        }
+
+        &__footer-left {
+            display: flex;
+            align-items: center;
+        }
+
+        &__footer-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--b3-theme-on-surface-light);
+
+            .svg {
+                width: 14px;
+                height: 14px;
+                flex-shrink: 0;
+            }
+        }
+
+        &__count {
+            font-weight: 500;
+        }
+    }
+
+    .tool-category {
+        margin-bottom: 24px;
+
+        &:last-child {
+            margin-bottom: 0;
+        }
+
+        &__title {
+            margin: 0 0 12px 0;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--b3-theme-primary);
+        }
+    }
+
+    .tool-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .tool-item {
+        padding: 12px;
+        border: 1px solid var(--b3-theme-surface-lighter);
+        border-radius: 4px;
+        transition: all 0.2s;
+
+        &:hover {
+            border-color: var(--b3-theme-primary-light);
+            background: var(--b3-theme-primary-lightest);
+        }
+
+        &--selected {
+            border-color: var(--b3-theme-primary);
+            background: var(--b3-theme-primary-lightest);
+        }
+
+        &__header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        &__header-right {
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
-        .icon-button {
-            padding: 4px;
-            border-radius: 4px;
+        &__checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             cursor: pointer;
-            border: none;
-            background: transparent;
+            user-select: none;
+
+            input[type='checkbox'] {
+                cursor: pointer;
+            }
+        }
+
+        &__name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        &__auto-approve {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 12px;
             color: var(--b3-theme-on-surface);
+            padding: 2px 8px;
+            border-radius: 3px;
+            white-space: nowrap;
 
             &:hover {
-                background: var(--b3-theme-surface-light);
-            }
-
-            .icon {
-                width: 12px;
-                height: 12px;
+                background: var(--b3-theme-primary-lighter);
             }
         }
-    }
 
-    .modal-content {
-        flex: 1;
-        overflow-y: auto;
-        padding: 16px;
-    }
-
-    .tool-category {
-        margin-bottom: 20px;
-
-        .category-title {
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 10px;
-            color: var(--b3-theme-on-surface);
-            opacity: 0.8;
-        }
-    }
-
-    .tool-list {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-        gap: 10px;
-    }
-
-    .tool-item {
-        display: flex;
-        align-items: center;
-        padding: 8px;
-        border-radius: 4px;
-        border: 1px solid var(--b3-border-color);
-        background: var(--b3-theme-surface);
-        transition: all 0.2s;
-        gap: 8px;
-
-        &:hover {
-            border-color: var(--b3-theme-primary);
+        &__auto-approve-text {
+            font-size: 11px;
         }
 
-        &.selected {
-            background: var(--b3-theme-primary-light);
-            border-color: var(--b3-theme-primary);
-            
-            .tool-checkbox {
-                background: var(--b3-theme-primary);
-                border-color: var(--b3-theme-primary);
-                color: var(--b3-theme-on-primary);
+        &__expand {
+            padding: 4px;
+            min-width: unset;
+
+            .svg {
+                width: 14px;
+                height: 14px;
+                transition: transform 0.2s;
+            }
+
+            &--rotated {
+                transform: rotate(90deg);
             }
         }
-    }
 
-    .tool-main {
-        flex: 1;
-        display: flex;
-        align-items: flex-start;
-        gap: 8px;
-        cursor: pointer;
-        min-width: 0;
-    }
-
-    .tool-checkbox {
-        width: 16px;
-        height: 16px;
-        border-radius: 3px;
-        border: 1px solid var(--b3-border-color);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        margin-top: 2px;
-        background: var(--b3-theme-surface);
-
-        .icon {
-            width: 10px;
-            height: 10px;
-        }
-    }
-
-    .tool-info {
-        flex: 1;
-        min-width: 0;
-
-        .tool-name {
+        &__description {
             font-size: 13px;
-            font-weight: 500;
-            color: var(--b3-theme-on-surface);
-            margin-bottom: 2px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            color: var(--b3-theme-on-surface-light);
+            margin-left: 28px;
         }
 
-        .tool-desc {
+        &__details {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--b3-theme-surface-lighter);
+        }
+
+        &__full-description {
             font-size: 12px;
-            color: var(--b3-theme-on-surface-light);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: var(--b3-theme-surface);
+            padding: 8px;
+            border-radius: 4px;
+            margin: 0 0 12px 0;
+        }
+
+        &__parameters {
+            font-size: 12px;
+
+            strong {
+                display: block;
+                margin-bottom: 8px;
+            }
+
+            ul {
+                margin: 0;
+                padding-left: 20px;
+                list-style: disc;
+            }
+
+            li {
+                margin: 4px 0;
+                line-height: 1.5;
+            }
+
+            code {
+                background: var(--b3-theme-surface);
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-family: var(--b3-font-family-code);
+            }
+        }
+
+        &__required {
+            color: var(--b3-theme-error);
+            font-size: 11px;
         }
     }
 
-    .tool-auto-approve {
-        padding: 4px;
-        border-radius: 4px;
-        cursor: pointer;
-        color: var(--b3-theme-on-surface-light);
-        opacity: 0.5;
+    .tool-selector__loading {
         display: flex;
         align-items: center;
         justify-content: center;
-
-        &:hover {
-            background: var(--b3-theme-surface-light);
-            opacity: 1;
-        }
-
-        &.active {
-            color: var(--b3-theme-primary);
-            opacity: 1;
-        }
-
-        .icon {
-            width: 14px;
-            height: 14px;
-        }
-    }
-
-    .modal-footer {
-        padding: 12px 16px;
-        border-top: 1px solid var(--b3-border-color);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-    }
-
-    .selected-count {
-        font-size: 12px;
+        padding: 40px;
         color: var(--b3-theme-on-surface-light);
+        gap: 8px;
     }
 </style>
