@@ -1,6 +1,6 @@
 import { pushErrMsg, pushMsg } from "../api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+// import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { MCPServerConfig } from "../defaultSettings";
 import type { Tool } from "../tools";
@@ -33,12 +33,22 @@ export class MCPManager {
     private async connect(config: MCPServerConfig) {
         let transport;
         if (config.type === 'stdio') {
+            // Check if we are in a browser environment or if process is polyfilled as browser
+            // @ts-ignore
+            const isBrowser = typeof window !== 'undefined' || (typeof process !== 'undefined' && process.platform === 'browser');
+            console.log(`isBrowser: ${isBrowser} process.platform: ${process.platform} config.type: ${config.type}`);
+            if (isBrowser) {
+                const msg = `Stdio transport is not supported in this environment (Browser). Skipping ${config.name}`;
+                console.warn(msg);
+                pushErrMsg(msg);
+                return;
+            }
             try {
-                transport = new StdioClientTransport({
-                    command: config.command!,
-                    args: config.args,
-                    env: config.env
-                });
+                // transport = new StdioClientTransport({
+                //     command: config.command!,
+                //     args: config.args,
+                //     env: config.env
+                // });
             } catch (e) {
                 console.error("Stdio transport failed to initialize", e);
                 throw e;
