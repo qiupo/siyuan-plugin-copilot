@@ -600,6 +600,11 @@ async function chatOpenAIFormat(
             options.onError?.(new Error('Request aborted'));
         } else {
             console.error('Chat error:', error);
+            const errMsg = (error as Error).message || String(error);
+            if (errMsg.includes('Failed to fetch')) {
+                options.onError?.(new Error(`无法连接到 AI 服务，请检查网络或 API 地址是否正确。(Failed to fetch)`));
+                return;
+            }
             options.onError?.(error as Error);
         }
         throw error;

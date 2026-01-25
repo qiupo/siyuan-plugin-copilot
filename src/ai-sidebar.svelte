@@ -594,6 +594,19 @@
 
     // Agent 模式
     let isToolSelectorOpen = false;
+
+    async function toggleToolSelector() {
+        if (!isToolSelectorOpen) {
+            try {
+                // 打开前刷新工具列表，确保获取最新的 MCP 工具
+                allTools = await getAllTools();
+            } catch (error) {
+                console.error('Failed to refresh tools:', error);
+            }
+        }
+        isToolSelectorOpen = !isToolSelectorOpen;
+    }
+
     let selectedTools: ToolConfig[] = []; // 选中的工具配置列表
     let toolCallsInProgress: Set<string> = new Set(); // 正在执行的工具调用ID
     let toolCallsExpanded: Record<string, boolean> = {}; // 工具调用是否展开，默认折叠
@@ -640,6 +653,7 @@
 
     // 订阅设置变化
     let unsubscribe: () => void;
+    let mcpUnsubscribe: () => void;
 
     onMount(async () => {
         settings = await plugin.loadSettings();
@@ -677,12 +691,23 @@
         await loadToolsConfig();
 
         // 初始化 MCP Manager
+        console.log(`init mcpManager with configs: ${JSON.stringify(settings.mcpServers || [])}`);
         try {
             await mcpManager.init(settings.mcpServers || []);
             allTools = await getAllTools();
         } catch (error) {
             console.error('Failed to load tools:', error);
         }
+
+        // 订阅 MCP 工具更新
+        mcpUnsubscribe = mcpManager.onToolsUpdate(async () => {
+            try {
+                allTools = await getAllTools();
+                console.log('Tools updated from MCP event');
+            } catch (error) {
+                console.error('Failed to update tools from event:', error);
+            }
+        });
 
         // 如果有系统提示词，添加到消息列表
         if (settings.aiSystemPrompt) {
@@ -778,6 +803,9 @@
         // 取消订阅
         if (unsubscribe) {
             unsubscribe();
+        }
+        if (mcpUnsubscribe) {
+            mcpUnsubscribe();
         }
 
         // 移除全局点击事件监听器
@@ -8112,7 +8140,7 @@
             {#if chatMode === 'agent'}
                 <button
                     class="b3-button b3-button--text ai-sidebar__tool-selector-btn"
-                    on:click={() => (isToolSelectorOpen = !isToolSelectorOpen)}
+                    on:click={toggleToolSelector}
                     title={t('aiSidebar.agent.selectTools')}
                 >
                     <svg class="b3-button__icon"><use xlink:href="#iconSettings"></use></svg>

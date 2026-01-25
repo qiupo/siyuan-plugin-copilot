@@ -63,7 +63,7 @@ export default defineConfig({
 
     define: {
         "process.env.DEV_MODE": JSON.stringify(isDev),
-        "process.env.NODE_ENV": JSON.stringify(env.NODE_ENV)
+        "process.env.NODE_ENV": JSON.stringify(env.NODE_ENV),
     },
 
     build: {
@@ -131,6 +131,7 @@ export default defineConfig({
             ],
 
             output: {
+                inlineDynamicImports: true,
                 entryFileNames: "[name].js",
                 assetFileNames: (assetInfo) => {
                     if (assetInfo.name === "style.css") {

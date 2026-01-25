@@ -1,3 +1,4 @@
+import "./polyfill";
 import {
     Plugin,
     Dialog,
@@ -27,6 +28,7 @@ export default class PluginSample extends Plugin {
     private chatDialogs: Map<string, { dialog: Dialog; app: ChatDialog }> = new Map();
 
     async onload() {
+        console.log("[Siyuan Copilot] onload");
         // 插件被启用时会自动调用这个函数
         // 设置i18n插件实例
         setPluginInstance(this);

@@ -9,8 +9,10 @@
     import { createEventDispatcher, onMount } from 'svelte';
     import { getAllTools, type Tool } from '../tools';
     import { t } from '../utils/i18n';
+    import { mcpManager } from '../libs/mcp-manager';
 
     export let selectedTools: ToolConfig[] = [];
+    export let availableTools: Tool[] | undefined = undefined;
 
     const dispatch = createEventDispatcher();
 
@@ -51,9 +53,10 @@
     // 按类别组织工具
     let categorizedTools: Record<string, Tool[]> = {};
 
-    onMount(async () => {
+    async function loadTools() {
+        loading = true;
         try {
-            const allTools = await getAllTools();
+            const allTools = availableTools || await getAllTools();
 
             // 1. 处理 SiYuan 工具
             const siyuanTools = allTools.filter(t => !t.function.name.startsWith('mcp__'));
@@ -120,6 +123,14 @@
         } finally {
             loading = false;
         }
+    }
+
+    onMount(() => {
+        loadTools();
+        const unsubscribe = mcpManager.onToolsUpdate(() => {
+            loadTools();
+        });
+        return unsubscribe;
     });
 
     // 切换工具选择
