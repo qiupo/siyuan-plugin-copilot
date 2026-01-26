@@ -2900,7 +2900,7 @@
                 let shouldContinue = true;
                 // 记录第一次工具调用后创建的assistant消息索引
                 let firstToolCallMessageIndex: number | null = null;
-
+                
                 while (shouldContinue && !abortController.signal.aborted) {
                     // 标记是否收到工具调用
                     let receivedToolCalls = false;
@@ -2944,81 +2944,96 @@
                                   }
                                 : undefined,
                             onToolCallComplete: async (toolCalls: ToolCall[]) => {
-                                console.log('Tool calls received:', toolCalls);
-                                receivedToolCalls = true;
+                                try {
+                                    console.log('Tool calls received:', toolCalls);
+                                    receivedToolCalls = true;
 
-                                // 如果是第一次工具调用，创建新的assistant消息
-                                if (firstToolCallMessageIndex === null) {
-                                    const assistantMessage: Message = {
-                                        role: 'assistant',
-                                        content: streamingMessage || '',
-                                        tool_calls: toolCalls,
-                                    };
-
-                                    if (isDeepseekThinkingAgent && streamingThinking) {
-                                        assistantMessage.reasoning_content = streamingThinking;
-                                        assistantMessage.thinking = streamingThinking;
+                                    // 检查是否重复调用相同的工具（防止死循环）
+                                    if (messages.length >= 2) {
+                                        const lastMsg = messages[messages.length - 1];
+                                        const secondLastMsg = messages[messages.length - 2];
+                                        
+                                        // 如果上一条是工具结果，上上条是助手消息且包含工具调用
+                                        if (lastMsg.role === 'tool' && secondLastMsg.role === 'assistant' && secondLastMsg.tool_calls) {
+                                            const prevToolCalls = secondLastMsg.tool_calls;
+                                            
+                                            // 检查当前工具调用是否与上一次完全相同
+                                            // 使用 JSON.parse 比较参数，忽略空白字符差异
+                                            const isDuplicate = toolCalls.length === prevToolCalls.length && 
+                                                toolCalls.every((tc, i) => {
+                                                    const prevTc = prevToolCalls[i];
+                                                    if (!prevTc || tc.function.name !== prevTc.function.name) return false;
+                                                    
+                                                    // 比较参数
+                                                    if (tc.function.arguments === prevTc.function.arguments) return true;
+                                                    
+                                                    try {
+                                                        const args1 = JSON.parse(tc.function.arguments);
+                                                        const args2 = JSON.parse(prevTc.function.arguments);
+                                                        // 简单的深度比较 (JSON.stringify 规范化)
+                                                        return JSON.stringify(args1) === JSON.stringify(args2);
+                                                    } catch (e) {
+                                                        return false;
+                                                    }
+                                                });
+                                                
+                                            if (isDuplicate) {
+                                                console.warn('Detected repeated tool calls with same parameters. Stopping loop.');
+                                                messages = [...messages, {
+                                                    role: 'assistant',
+                                                    content: '⚠️ 检测到重复的工具调用，已停止自动执行以防止死循环。'
+                                                }];
+                                                shouldContinue = false;
+                                                return;
+                                            }
+                                        }
                                     }
-                                    messages = [...messages, assistantMessage];
-                                    firstToolCallMessageIndex = messages.length - 1;
-                                } else {
-                                    // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
-                                    const existingMessage = messages[firstToolCallMessageIndex];
-                                    existingMessage.tool_calls = [
-                                        ...(existingMessage.tool_calls || []),
-                                        ...toolCalls,
-                                    ];
 
-                                    if (isDeepseekThinkingAgent && streamingThinking) {
-                                        existingMessage.reasoning_content = streamingThinking;
-                                        existingMessage.thinking = streamingThinking;
+                                    // 如果是第一次工具调用，创建新的assistant消息
+                                    if (firstToolCallMessageIndex === null) {
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: streamingMessage || '',
+                                            tool_calls: toolCalls,
+                                        };
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            assistantMessage.reasoning_content = streamingThinking;
+                                            assistantMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages, assistantMessage];
+                                        firstToolCallMessageIndex = messages.length - 1;
+                                    } else {
+                                        // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        existingMessage.tool_calls = [
+                                            ...(existingMessage.tool_calls || []),
+                                            ...toolCalls,
+                                        ];
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            existingMessage.reasoning_content = streamingThinking;
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages];
                                     }
-                                    messages = [...messages];
-                                }
-                                streamingMessage = '';
+                                    streamingMessage = '';
 
-                                // 处理每个工具调用
-                                for (const toolCall of toolCalls) {
-                                    const toolConfig = selectedTools.find(
-                                        t => t.name === toolCall.function.name
-                                    );
-                                    const autoApprove = toolConfig?.autoApprove || false;
+                                    // 处理每个工具调用
+                                    for (const toolCall of toolCalls) {
+                                        const toolConfig = selectedTools.find(
+                                            t => t.name === toolCall.function.name
+                                        );
+                                        const autoApprove = toolConfig?.autoApprove || false;
 
-                                    try {
-                                        let toolResult: string;
+                                        try {
+                                            let toolResult: string;
 
-                                        if (autoApprove) {
-                                            // 自动批准：直接执行工具
-                                            console.log(
-                                                `Auto-approving tool call: ${toolCall.function.name}`
-                                            );
-                                            toolResult = await executeToolCall(toolCall);
-
-                                            // 添加工具结果消息
-                                            const toolResultMessage: Message = {
-                                                role: 'tool',
-                                                tool_call_id: toolCall.id,
-                                                name: toolCall.function.name,
-                                                content: toolResult,
-                                            };
-                                            messages = [...messages, toolResultMessage];
-                                        } else {
-                                            // 需要手动批准：显示批准对话框
-                                            console.log(
-                                                `Tool call requires approval: ${toolCall.function.name}`
-                                            );
-
-                                            // 显示批准对话框
-                                            pendingToolCall = toolCall;
-                                            isToolApprovalDialogOpen = true;
-
-                                            // 等待用户批准或拒绝
-                                            const approved = await new Promise<boolean>(resolve => {
-                                                // 临时保存 resolve 函数
-                                                (window as any).__toolApprovalResolve = resolve;
-                                            });
-
-                                            if (approved) {
+                                            if (autoApprove) {
+                                                // 自动批准：直接执行工具
+                                                console.log(
+                                                    `Auto-approving tool call: ${toolCall.function.name}`
+                                                );
                                                 toolResult = await executeToolCall(toolCall);
 
                                                 // 添加工具结果消息
@@ -3030,59 +3045,87 @@
                                                 };
                                                 messages = [...messages, toolResultMessage];
                                             } else {
-                                                // 用户拒绝
-                                                const toolResultMessage: Message = {
-                                                    role: 'tool',
-                                                    tool_call_id: toolCall.id,
-                                                    name: toolCall.function.name,
-                                                    content: `用户拒绝执行工具 ${toolCall.function.name}`,
-                                                };
-                                                messages = [...messages, toolResultMessage];
+                                                // 需要手动批准：显示批准对话框
+                                                console.log(
+                                                    `Tool call requires approval: ${toolCall.function.name}`
+                                                );
+
+                                                // 显示批准对话框
+                                                pendingToolCall = toolCall;
+                                                isToolApprovalDialogOpen = true;
+
+                                                // 等待用户批准或拒绝
+                                                const approved = await new Promise<boolean>(resolve => {
+                                                    // 临时保存 resolve 函数
+                                                    (window as any).__toolApprovalResolve = resolve;
+                                                });
+
+                                                if (approved) {
+                                                    toolResult = await executeToolCall(toolCall);
+
+                                                    // 添加工具结果消息
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: toolResult,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                } else {
+                                                    // 用户拒绝
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: `用户拒绝执行工具 ${toolCall.function.name}`,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                }
                                             }
+                                        } catch (error) {
+                                            console.error(
+                                                `Tool execution failed: ${toolCall.function.name}`,
+                                                error
+                                            );
+                                            const errorMessage: Message = {
+                                                role: 'tool',
+                                                tool_call_id: toolCall.id,
+                                                name: toolCall.function.name,
+                                                content: `工具执行失败: ${(error as Error).message}`,
+                                            };
+                                            messages = [...messages, errorMessage];
                                         }
-                                    } catch (error) {
-                                        console.error(
-                                            `Tool execution failed: ${toolCall.function.name}`,
-                                            error
-                                        );
-                                        const errorMessage: Message = {
-                                            role: 'tool',
-                                            tool_call_id: toolCall.id,
-                                            name: toolCall.function.name,
-                                            content: `工具执行失败: ${(error as Error).message}`,
+                                    }
+
+                                    hasUnsavedChanges = true;
+
+                                    // 更新 messagesToSend，准备下一次循环
+                                    // 只在字段存在时才包含，避免传递 undefined 字段给 API
+                                    messagesToSend = messages.map(msg => {
+                                        const baseMsg: any = {
+                                            role: msg.role,
+                                            content: msg.content,
                                         };
-                                        messages = [...messages, errorMessage];
-                                    }
+
+                                        // 只在有工具调用相关字段时才包含
+                                        if (msg.tool_calls) {
+                                            baseMsg.tool_calls = msg.tool_calls;
+                                        }
+                                        if (msg.tool_call_id) {
+                                            baseMsg.tool_call_id = msg.tool_call_id;
+                                            baseMsg.name = msg.name;
+                                        }
+
+                                        if (isDeepseekThinkingAgent && msg.reasoning_content) {
+                                            baseMsg.reasoning_content = msg.reasoning_content;
+                                        }
+
+                                        return baseMsg;
+                                    });
+                                } finally {
+                                    // 通知工具执行完成
+                                    toolExecutionComplete?.();
                                 }
-
-                                hasUnsavedChanges = true;
-
-                                // 更新 messagesToSend，准备下一次循环
-                                // 只在字段存在时才包含，避免传递 undefined 字段给 API
-                                messagesToSend = messages.map(msg => {
-                                    const baseMsg: any = {
-                                        role: msg.role,
-                                        content: msg.content,
-                                    };
-
-                                    // 只在有工具调用相关字段时才包含
-                                    if (msg.tool_calls) {
-                                        baseMsg.tool_calls = msg.tool_calls;
-                                    }
-                                    if (msg.tool_call_id) {
-                                        baseMsg.tool_call_id = msg.tool_call_id;
-                                        baseMsg.name = msg.name;
-                                    }
-
-                                    if (isDeepseekThinkingAgent && msg.reasoning_content) {
-                                        baseMsg.reasoning_content = msg.reasoning_content;
-                                    }
-
-                                    return baseMsg;
-                                });
-
-                                // 通知工具执行完成
-                                toolExecutionComplete?.();
                             },
                             onChunk: async (chunk: string) => {
                                 streamingMessage += chunk;
