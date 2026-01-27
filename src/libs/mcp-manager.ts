@@ -14,7 +14,9 @@ export class MCPManager {
     string,
     { serverId: string; originalName: string }
   > = new Map();
+  private notifiedConnections: Map<string, string> = new Map();
   private listeners: (() => void)[] = [];
+  private initPromise: Promise<void> | null = null;
 
   constructor() {}
 
@@ -29,51 +31,168 @@ export class MCPManager {
     this.listeners.forEach((l) => l());
   }
 
+  private async closeClient(id: string) {
+    const client = this.clients.get(id);
+    if (!client) return;
+    try {
+      await client.close();
+    } catch (e) {
+      console.error(`Error closing client ${id}:`, e);
+    } finally {
+      this.clients.delete(id);
+      this.notifiedConnections.delete(id);
+    }
+  }
+
+  private getConfigSignature(config: MCPServerConfig) {
+    const env = config.env || {};
+    const envKeys = Object.keys(env).sort();
+    const normalizedEnv: Record<string, string> = {};
+    for (const key of envKeys) {
+      normalizedEnv[key] = env[key];
+    }
+    return JSON.stringify({
+      id: config.id,
+      name: config.name,
+      type: config.type,
+      command: config.command || "",
+      args: config.args || [],
+      url: config.url || "",
+      env: normalizedEnv,
+      enabled: config.enabled,
+    });
+  }
+
+  private shouldNotifyConnected(config: MCPServerConfig) {
+    const signature = this.getConfigSignature(config);
+    const previous = this.notifiedConnections.get(config.id);
+    if (previous === signature) {
+      return false;
+    }
+    this.notifiedConnections.set(config.id, signature);
+    return true;
+  }
+
   public async init(configs: MCPServerConfig[]) {
+    console.log(`[MCP] init called with ${configs.length} configs:`, JSON.stringify(configs.map(c => ({id: c.id, name: c.name, enabled: c.enabled}))));
+    
     // Check if configs have changed to avoid unnecessary reconnections
-    if (JSON.stringify(configs) === JSON.stringify(this.configs)) {
+    if (JSON.stringify(configs) === JSON.stringify(this.configs) && !this.initPromise) {
+      console.log(`[MCP] Configs unchanged, skipping init`);
       return;
     }
 
-    // Close existing connections if re-initializing
-    await this.close();
-
-    this.configs = configs;
-    const connectionPromises = configs.map(async (config) => {
-      if (config.enabled) {
-        try {
-          await this.connect(config);
-        } catch (e) {
-          const errorDetail =
-            config.type === "sse" ? ` (URL: ${config.url})` : "";
-          console.error(
-            `Failed to connect to MCP server ${config.name}${errorDetail}:`,
-            e,
-          );
-          const errorMsg = e instanceof Error ? e.message : String(e);
-
-          let userFriendlyMsg = errorMsg;
-          if (
-            errorMsg.includes("ERR_CONNECTION_REFUSED") ||
-            errorMsg.includes("fetch failed") ||
-            errorMsg.includes("Failed to fetch")
-          ) {
-            userFriendlyMsg = `无法连接到服务器。请检查服务是否已启动且地址正确。(Connection refused / Failed to fetch)`;
-          } else if (
-            errorMsg.includes(
-              "Endpoint origin does not match connection origin",
-            )
-          ) {
-            userFriendlyMsg = `连接错误：服务端返回的地址与访问地址不匹配。通常是因为通过 IP 访问了绑定在 localhost 的服务。请尝试使用 localhost 访问，或修改服务端配置允许外部 IP。(${errorMsg})`;
-          }
-
-          pushErrMsg(`MCP server ${config.name}: ${userFriendlyMsg}`);
+    const runInit = async () => {
+      const normalizedConfigs = configs.map((config) => ({ ...config }));
+      const idCounter = new Map<string, number>();
+      const duplicates: string[] = [];
+      for (const config of normalizedConfigs) {
+        const baseId = (config.id || "").trim() || "mcp_server";
+        const count = (idCounter.get(baseId) || 0) + 1;
+        idCounter.set(baseId, count);
+        if (count > 1) {
+          duplicates.push(baseId);
+          config.id = `${baseId}__${count}`;
+          console.warn(`[MCP] Duplicate server ID "${baseId}" detected. Using "${config.id}" instead.`);
+        } else {
+          config.id = baseId;
         }
       }
-    });
+      if (duplicates.length > 0) {
+        const uniqueDuplicates = Array.from(new Set(duplicates));
+        console.error(`[MCP] Duplicate server IDs detected: ${uniqueDuplicates.join(', ')}`);
+        pushErrMsg(`MCP 配置错误: 检测到重复的服务器 ID (${uniqueDuplicates.join(', ')})。这会导致部分工具无法加载。已为重复项自动修正本次会话的 ID。`);
+      }
 
-    await Promise.all(connectionPromises);
-    this.notifyToolsUpdate();
+      const previousConfigs = this.configs;
+      const previousConfigMap = new Map(previousConfigs.map((c) => [c.id, c]));
+      const normalizedConfigMap = new Map(normalizedConfigs.map((c) => [c.id, c]));
+
+      const toDisconnect = new Set<string>();
+      for (const [id] of this.clients.entries()) {
+        const next = normalizedConfigMap.get(id);
+        if (!next || !next.enabled) {
+          toDisconnect.add(id);
+        }
+      }
+      for (const [id, prev] of previousConfigMap.entries()) {
+        const next = normalizedConfigMap.get(id);
+        if (!next || !next.enabled) continue;
+        if (this.getConfigSignature(prev) !== this.getConfigSignature(next)) {
+          toDisconnect.add(id);
+        }
+      }
+
+      await Promise.all(Array.from(toDisconnect).map((id) => this.closeClient(id)));
+
+      this.configs = normalizedConfigs;
+      const connectionCandidates = normalizedConfigs.filter((config) => {
+        if (!config.enabled) return false;
+        const prevConfig = previousConfigMap.get(config.id);
+        const isConnected = this.clients.has(config.id);
+        const changed =
+          !prevConfig ||
+          this.getConfigSignature(prevConfig) !==
+            this.getConfigSignature(config);
+        return !isConnected || changed;
+      });
+
+      console.log(
+        `[MCP] Planned connections: ${connectionCandidates.length}`,
+        connectionCandidates.map((c) => ({
+          id: c.id,
+          name: c.name,
+          type: c.type,
+          enabled: c.enabled,
+        })),
+      );
+
+      const connectionPromises = connectionCandidates.map(async (config) => {
+        if (config.enabled) {
+          try {
+            await this.connect(config);
+          } catch (e) {
+            const errorDetail =
+              config.type === "sse" ? ` (URL: ${config.url})` : "";
+            console.error(
+              `Failed to connect to MCP server ${config.name}${errorDetail}:`,
+              e,
+            );
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            // ... (keep existing error handling)
+            let userFriendlyMsg = errorMsg;
+            if (
+              errorMsg.includes("ERR_CONNECTION_REFUSED") ||
+              errorMsg.includes("fetch failed") ||
+              errorMsg.includes("Failed to fetch")
+            ) {
+              userFriendlyMsg = `无法连接到服务器。请检查服务是否已启动且地址正确。(Connection refused / Failed to fetch)`;
+            } else if (
+              errorMsg.includes(
+                "Endpoint origin does not match connection origin",
+              )
+            ) {
+              userFriendlyMsg = `连接错误：服务端返回的地址与访问地址不匹配。通常是因为通过 IP 访问了绑定在 localhost 的服务。请尝试使用 localhost 访问，或修改服务端配置允许外部 IP。(${errorMsg})`;
+            }
+
+            pushErrMsg(`MCP server ${config.name}: ${userFriendlyMsg}`);
+          }
+        } else {
+          console.log(`[MCP] Skipping disabled server: ${config.name} (${config.id})`);
+        }
+      });
+
+      await Promise.all(connectionPromises);
+      this.notifyToolsUpdate();
+    };
+
+    const chained = this.initPromise ? this.initPromise.then(runInit) : runInit();
+    this.initPromise = chained.finally(() => {
+      if (this.initPromise === chained) {
+        this.initPromise = null;
+      }
+    });
+    await this.initPromise;
   }
 
   private async connect(config: MCPServerConfig) {
@@ -145,8 +264,10 @@ export class MCPManager {
 
       await client.connect(transport);
       this.clients.set(config.id, client);
-      console.log(`Connected to MCP server: ${config.name}`);
-      pushMsg(`Connected to MCP server: ${config.name}`);
+      console.log(`[MCP] Connected to MCP server: ${config.name} (ID: ${config.id}). Total clients: ${this.clients.size}`);
+      if (this.shouldNotifyConnected(config)) {
+        pushMsg(`Connected to MCP server: ${config.name}`);
+      }
 
     } else if (config.type === "sse") {
       if (!config.url) {
@@ -178,8 +299,10 @@ export class MCPManager {
         await client.connect(transport);
         this.clients.set(config.id, client);
         connected = true;
-        console.log(`[MCP] Connected via StreamableHTTP to ${config.name}`);
-        pushMsg(`Connected to MCP server: ${config.name} (HTTP)`);
+        console.log(`[MCP] Connected via StreamableHTTP to ${config.name} (ID: ${config.id}). Total clients: ${this.clients.size}`);
+        if (this.shouldNotifyConnected(config)) {
+          pushMsg(`Connected to MCP server: ${config.name} (HTTP)`);
+        }
       } catch (e) {
         console.warn(`[MCP] StreamableHTTP failed for ${config.name}, falling back to SSE. Error: ${e}`);
       }
@@ -215,8 +338,10 @@ export class MCPManager {
 
           await client.connect(transport);
           this.clients.set(config.id, client);
-          console.log(`[MCP] Connected via Legacy SSE to ${config.name}`);
-          pushMsg(`Connected to MCP server: ${config.name} (SSE)`);
+          console.log(`[MCP] Connected via Legacy SSE to ${config.name} (ID: ${config.id}). Total clients: ${this.clients.size}`);
+          if (this.shouldNotifyConnected(config)) {
+            pushMsg(`Connected to MCP server: ${config.name} (SSE)`);
+          }
         } catch (e) {
           console.error(`[MCP] Legacy SSE failed for ${config.name}:`, e);
           throw new Error(`Failed to connect to ${config.name} (tried both HTTP and SSE). Last error: ${e}`);
@@ -228,26 +353,47 @@ export class MCPManager {
   }
 
   public async getTools(): Promise<Tool[]> {
-    const tempMap = new Map<
-      string,
-      { serverId: string; originalName: string }
-    >();
-    
+    if (this.initPromise) {
+      await this.initPromise;
+    }
     const clientEntries = Array.from(this.clients.entries());
-    const toolsResults = await Promise.all(
+    console.log(`[MCP] getTools called. Connected clients: ${clientEntries.length}`, clientEntries.map(e => e[0]));
+    
+    // 1. Fetch tools from all clients concurrently
+    const rawResults = await Promise.all(
       clientEntries.map(async ([id, client]) => {
         try {
           console.log(`[MCP] Listing tools for client ${id}...`);
           const result = await client.listTools();
           console.log(`[MCP] Client ${id} returned ${result.tools.length} tools`);
-          
-          const serverConfig = this.configs.find((c) => c.id === id);
+          return { id, tools: result.tools, error: null };
+        } catch (e) {
+          console.error(`[MCP ERROR] Failed to list tools for client ${id}:`, e);
+          return { id, tools: [], error: e };
+        }
+      })
+    );
 
-          const tools: Tool[] = result.tools.map((t) => {
+    // 2. Process tools and handle naming conflicts sequentially
+    const tempMap = new Map<
+      string,
+      { serverId: string; originalName: string }
+    >();
+    const allTools: Tool[] = [];
+    
+    for (const { id, tools } of rawResults) {
+        if (tools.length === 0) continue;
+        
+        const serverConfig = this.configs.find((c) => c.id === id);
+        const serverName = serverConfig?.name || "unknown";
+
+        for (const t of tools) {
             let toolName = `mcp__${t.name}`;
+            
             // Handle naming conflicts
             if (tempMap.has(toolName)) {
-              toolName = `mcp__${t.name}__${serverConfig?.name || "unknown"}`;
+              console.warn(`[MCP] Tool name conflict: ${toolName}. Renaming to include server name.`);
+              toolName = `mcp__${t.name}__${serverName}`;
             }
 
             tempMap.set(toolName, {
@@ -255,7 +401,7 @@ export class MCPManager {
               originalName: t.name,
             });
 
-            return {
+            allTools.push({
               type: "function",
               function: {
                 name: toolName,
@@ -266,20 +412,12 @@ export class MCPManager {
                   required: t.inputSchema.required || [],
                 } as any,
               },
-              _mcpServerName: serverConfig?.name,
-            } as any as Tool;
-          });
-          console.log(`Tools loaded from client ${id}:`, tools.length);
-          return tools;
-        } catch (e) {
-          console.error(`Failed to list tools for client ${id}:`, e);
-          return [];
+              _mcpServerName: serverName,
+            } as any as Tool);
         }
-      })
-    );
-
-    // Merge all tools
-    const allTools = toolsResults.flat();
+    }
+    
+    console.log(`[MCP] Total tools processed: ${allTools.length}`);
     this.toolServerMap = tempMap;
     return allTools;
   }
@@ -356,14 +494,8 @@ export class MCPManager {
   }
 
   public async close() {
-    for (const client of this.clients.values()) {
-      try {
-        await client.close();
-      } catch (e) {
-        console.error("Error closing client:", e);
-      }
-    }
-    this.clients.clear();
+    const ids = Array.from(this.clients.keys());
+    await Promise.all(ids.map((id) => this.closeClient(id)));
   }
 }
 

@@ -93,7 +93,7 @@ export interface ChatOptions {
     onThinkingComplete?: (thinking: string) => void; // 思考完成回调
     tools?: any[]; // Agent模式的工具列表
     onToolCall?: (toolCall: ToolCall) => void; // Tool Call 回调
-    onToolCallComplete?: (toolCalls: ToolCall[]) => void; // Tool Calls 完成回调
+    onToolCallComplete?: (toolCalls: ToolCall[]) => Promise<void>; // Tool Calls 完成回调
     customBody?: any; // 自定义请求体参数
 }
 
@@ -836,7 +836,7 @@ async function handleStreamResponse(
                 }));
 
             if (toolCalls.length > 0 && options.onToolCallComplete) {
-                options.onToolCallComplete(toolCalls);
+                await options.onToolCallComplete(toolCalls);
             }
         }
 
