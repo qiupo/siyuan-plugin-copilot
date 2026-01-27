@@ -6649,7 +6649,7 @@
 
         // 准备发送给AI的消息（包含系统提示词和上下文文档）
         // 深拷贝消息数组，避免修改原始消息
-        const messagesToSend = messages
+        let messagesToSend = messages
             .filter(msg => msg.role !== 'system')
             .map((msg, index, array) => {
                 const baseMsg: any = {
@@ -6871,85 +6871,406 @@
             const enableThinking =
                 modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false);
 
-            await chat(
-                currentProvider,
-                {
-                    apiKey: providerConfig.apiKey,
-                    model: modelConfig.id,
-                    messages: messagesToSend,
-                    temperature: modelConfig.temperature,
-                    maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
-                    stream: true,
-                    signal: abortController.signal,
-                    customBody,
-                    enableThinking,
-                    reasoningEffort: modelConfig.thinkingEffort || 'medium',
-                    onThinkingChunk: enableThinking
-                        ? async (chunk: string) => {
-                              isThinkingPhase = true;
-                              streamingThinking += chunk;
-                              await scrollToBottom();
-                          }
-                        : undefined,
-                    onThinkingComplete: enableThinking
-                        ? (thinking: string) => {
-                              isThinkingPhase = false;
-                              thinkingCollapsed[messages.length] = true;
-                          }
-                        : undefined,
-                    onChunk: async (chunk: string) => {
-                        streamingMessage += chunk;
-                        await scrollToBottom();
-                    },
-                    onComplete: async (fullText: string) => {
-                        // 如果已经中断，不再添加消息（避免重复）
-                        if (isAborted) {
-                            return;
-                        }
+            const isDeepseekThinkingAgent =
+                chatMode === 'agent' &&
+                currentProvider === 'deepseek' &&
+                modelConfig.capabilities?.thinking &&
+                (modelConfig.thinkingEnabled || false);
 
-                        // 转换 LaTeX 数学公式格式为 Markdown 格式
-                        const convertedText = convertLatexToMarkdown(fullText);
+            // 准备 Agent 模式的工具列表
+            let toolsForAgent: any[] | undefined = undefined;
+            if (chatMode === 'agent' && selectedTools.length > 0) {
+                // 根据选中的工具名称筛选出对应的工具定义
+                toolsForAgent = allTools.filter(tool =>
+                    selectedTools.some(t => t.name === tool.function.name)
+                );
+            }
 
-                        const assistantMessage: Message = {
-                            role: 'assistant',
-                            content: convertedText,
-                        };
+            // Agent 模式使用循环调用
+            if (chatMode === 'agent' && toolsForAgent && toolsForAgent.length > 0) {
+                let shouldContinue = true;
+                // 记录第一次工具调用后创建的assistant消息索引
+                let firstToolCallMessageIndex: number | null = null;
+                
+                while (shouldContinue && !abortController.signal.aborted) {
+                    // 标记是否收到工具调用
+                    let receivedToolCalls = false;
+                    // 用于等待工具执行完成的 Promise
+                    let toolExecutionComplete: (() => void) | null = null;
+                    const toolExecutionPromise = new Promise<void>(resolve => {
+                        toolExecutionComplete = resolve;
+                    });
 
-                        if (enableThinking && streamingThinking) {
-                            assistantMessage.thinking = streamingThinking;
-                        }
+                    await chat(
+                        currentProvider,
+                        {
+                            apiKey: providerConfig.apiKey,
+                            model: modelConfig.id,
+                            messages: messagesToSend,
+                            temperature: modelConfig.temperature,
+                            maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
+                            stream: true,
+                            signal: abortController.signal,
+                            enableThinking,
+                            reasoningEffort: modelConfig.thinkingEffort || 'medium',
+                            tools: toolsForAgent,
+                            customBody, // 传递自定义参数
+                            onThinkingChunk: enableThinking
+                                ? async (chunk: string) => {
+                                      isThinkingPhase = true;
+                                      streamingThinking += chunk;
+                                      await scrollToBottom();
+                                  }
+                                : undefined,
+                            onThinkingComplete: enableThinking
+                                ? (thinking: string) => {
+                                      isThinkingPhase = false;
+                                      thinkingCollapsed = {
+                                          ...thinkingCollapsed,
+                                          [messages.length]: true,
+                                      };
+                                  }
+                                : undefined,
+                            onToolCallComplete: async (toolCalls: ToolCall[]) => {
+                                try {
+                                    console.log('Tool calls received:', toolCalls);
+                                    receivedToolCalls = true;
 
-                        messages = [...messages, assistantMessage];
-                        streamingMessage = '';
-                        streamingThinking = '';
-                        isThinkingPhase = false;
-                        isLoading = false;
-                        abortController = null;
-                        hasUnsavedChanges = true;
+                                    // 检查是否重复调用相同的工具（防止死循环）
+                                    if (messages.length >= 2) {
+                                        const lastMsg = messages[messages.length - 1];
+                                        const secondLastMsg = messages[messages.length - 2];
+                                        
+                                        // 如果上一条是工具结果，上上条是助手消息且包含工具调用
+                                        if (lastMsg.role === 'tool' && secondLastMsg.role === 'assistant' && secondLastMsg.tool_calls) {
+                                            const prevToolCalls = secondLastMsg.tool_calls;
+                                            
+                                            // 检查当前工具调用是否与上一次完全相同
+                                            const isDuplicate = toolCalls.length === prevToolCalls.length && 
+                                                toolCalls.every((tc, i) => {
+                                                    const prevTc = prevToolCalls[i];
+                                                    if (!prevTc || tc.function.name !== prevTc.function.name) return false;
+                                                    
+                                                    // 比较参数
+                                                    if (tc.function.arguments === prevTc.function.arguments) return true;
+                                                    
+                                                    try {
+                                                        const args1 = JSON.parse(tc.function.arguments);
+                                                        const args2 = JSON.parse(prevTc.function.arguments);
+                                                        return JSON.stringify(args1) === JSON.stringify(args2);
+                                                    } catch (e) {
+                                                        return false;
+                                                    }
+                                                });
+                                                
+                                            if (isDuplicate) {
+                                                console.warn('Detected repeated tool calls with same parameters. Stopping loop.');
+                                                messages = [...messages, {
+                                                    role: 'assistant',
+                                                    content: '⚠️ 检测到重复的工具调用，已停止自动执行以防止死循环。'
+                                                }];
+                                                shouldContinue = false;
+                                                return;
+                                            }
+                                        }
+                                    }
 
-                        // AI 回复完成后，自动保存当前会话
-                        await saveCurrentSession(true);
-                    },
-                    onError: (error: Error) => {
-                        if (error.message !== 'Request aborted') {
-                            // 将错误消息作为一条 assistant 消息添加
-                            const errorMessage: Message = {
+                                    // 如果是第一次工具调用，创建新的assistant消息
+                                    if (firstToolCallMessageIndex === null) {
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: streamingMessage || '',
+                                            tool_calls: toolCalls,
+                                        };
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            assistantMessage.reasoning_content = streamingThinking;
+                                            assistantMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages, assistantMessage];
+                                        firstToolCallMessageIndex = messages.length - 1;
+                                    } else {
+                                        // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        existingMessage.tool_calls = [
+                                            ...(existingMessage.tool_calls || []),
+                                            ...toolCalls,
+                                        ];
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            existingMessage.reasoning_content = streamingThinking;
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages];
+                                    }
+                                    streamingMessage = '';
+
+                                    // 处理每个工具调用
+                                    for (const toolCall of toolCalls) {
+                                        const toolConfig = selectedTools.find(
+                                            t => t.name === toolCall.function.name
+                                        );
+                                        const autoApprove = toolConfig?.autoApprove || false;
+
+                                        try {
+                                            let toolResult: string;
+
+                                            if (autoApprove) {
+                                                console.log(
+                                                    `Auto-approving tool call: ${toolCall.function.name}`
+                                                );
+                                                toolResult = await executeToolCall(toolCall);
+
+                                                const toolResultMessage: Message = {
+                                                    role: 'tool',
+                                                    tool_call_id: toolCall.id,
+                                                    name: toolCall.function.name,
+                                                    content: toolResult,
+                                                };
+                                                messages = [...messages, toolResultMessage];
+                                            } else {
+                                                console.log(
+                                                    `Tool call requires approval: ${toolCall.function.name}`
+                                                );
+
+                                                pendingToolCall = toolCall;
+                                                isToolApprovalDialogOpen = true;
+
+                                                const approved = await new Promise<boolean>(resolve => {
+                                                    (window as any).__toolApprovalResolve = resolve;
+                                                });
+
+                                                if (approved) {
+                                                    toolResult = await executeToolCall(toolCall);
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: toolResult,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                } else {
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: `用户拒绝执行工具 ${toolCall.function.name}`,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                }
+                                            }
+                                        } catch (error) {
+                                            console.error(
+                                                `Tool execution failed: ${toolCall.function.name}`,
+                                                error
+                                            );
+                                            const errorMessage: Message = {
+                                                role: 'tool',
+                                                tool_call_id: toolCall.id,
+                                                name: toolCall.function.name,
+                                                content: `工具执行失败: ${(error as Error).message}`,
+                                            };
+                                            messages = [...messages, errorMessage];
+                                        }
+                                    }
+
+                                    hasUnsavedChanges = true;
+
+                                    // 更新 messagesToSend，准备下一次循环
+                                    messagesToSend = messages.map(msg => {
+                                        const baseMsg: any = {
+                                            role: msg.role,
+                                            content: msg.content,
+                                        };
+
+                                        if (msg.tool_calls) {
+                                            baseMsg.tool_calls = msg.tool_calls;
+                                        }
+                                        if (msg.tool_call_id) {
+                                            baseMsg.tool_call_id = msg.tool_call_id;
+                                            baseMsg.name = msg.name;
+                                        }
+
+                                        if (isDeepseekThinkingAgent && msg.reasoning_content) {
+                                            baseMsg.reasoning_content = msg.reasoning_content;
+                                        }
+
+                                        return baseMsg;
+                                    });
+                                } finally {
+                                    toolExecutionComplete?.();
+                                }
+                            },
+                            onChunk: async (chunk: string) => {
+                                streamingMessage += chunk;
+                                await scrollToBottom();
+                            },
+                            onComplete: async (fullText: string) => {
+                                if (isAborted) {
+                                    shouldContinue = false;
+                                    toolExecutionComplete?.();
+                                    return;
+                                }
+
+                                if (!receivedToolCalls) {
+                                    shouldContinue = false;
+
+                                    const convertedText = convertLatexToMarkdown(fullText);
+
+                                    if (
+                                        firstToolCallMessageIndex !== null &&
+                                        convertedText.trim()
+                                    ) {
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        existingMessage.finalReply = convertedText;
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            existingMessage.reasoning_content = streamingThinking;
+                                        }
+
+                                        if (enableThinking && streamingThinking) {
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+
+                                        messages = [...messages];
+                                    } else {
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: convertedText,
+                                        };
+
+                                        if (enableThinking && streamingThinking) {
+                                            assistantMessage.thinking = streamingThinking;
+                                            if (isDeepseekThinkingAgent) {
+                                                assistantMessage.reasoning_content =
+                                                    streamingThinking;
+                                            }
+                                        }
+
+                                        messages = [...messages, assistantMessage];
+                                    }
+
+                                    streamingMessage = '';
+                                    streamingThinking = '';
+                                    isThinkingPhase = false;
+                                    isLoading = false;
+                                    abortController = null;
+                                    hasUnsavedChanges = true;
+
+                                    await saveCurrentSession(true);
+
+                                    toolExecutionComplete?.();
+                                }
+                            },
+                            onError: (error: Error) => {
+                                shouldContinue = false;
+                                if (error.message !== 'Request aborted') {
+                                    const errorMessage: Message = {
+                                        role: 'assistant',
+                                        content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                    };
+                                    messages = [...messages, errorMessage];
+                                    hasUnsavedChanges = true;
+                                }
+                                isLoading = false;
+                                streamingMessage = '';
+                                streamingThinking = '';
+                                isThinkingPhase = false;
+                                abortController = null;
+                                
+                                toolExecutionComplete?.();
+                            },
+                        },
+                        providerConfig.customApiUrl,
+                        providerConfig.advancedConfig
+                    );
+
+                    await toolExecutionPromise;
+                }
+            } else {
+                await chat(
+                    currentProvider,
+                    {
+                        apiKey: providerConfig.apiKey,
+                        model: modelConfig.id,
+                        messages: messagesToSend,
+                        temperature: modelConfig.temperature,
+                        maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
+                        stream: true,
+                        signal: abortController.signal,
+                        customBody,
+                        enableThinking,
+                        reasoningEffort: modelConfig.thinkingEffort || 'medium',
+                        onThinkingChunk: enableThinking
+                            ? async (chunk: string) => {
+                                  isThinkingPhase = true;
+                                  streamingThinking += chunk;
+                                  await scrollToBottom();
+                              }
+                            : undefined,
+                        onThinkingComplete: enableThinking
+                            ? (thinking: string) => {
+                                  isThinkingPhase = false;
+                                  thinkingCollapsed = {
+                                      ...thinkingCollapsed,
+                                      [messages.length]: true,
+                                  };
+                              }
+                            : undefined,
+                        onChunk: async (chunk: string) => {
+                            streamingMessage += chunk;
+                            await scrollToBottom();
+                        },
+                        onComplete: async (fullText: string) => {
+                            // 如果已经中断，不再添加消息（避免重复）
+                            if (isAborted) {
+                                return;
+                            }
+
+                            // 转换 LaTeX 数学公式格式为 Markdown 格式
+                            const convertedText = convertLatexToMarkdown(fullText);
+
+                            const assistantMessage: Message = {
                                 role: 'assistant',
-                                content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                content: convertedText,
                             };
-                            messages = [...messages, errorMessage];
+
+                            if (enableThinking && streamingThinking) {
+                                assistantMessage.thinking = streamingThinking;
+                            }
+
+                            messages = [...messages, assistantMessage];
+                            streamingMessage = '';
+                            streamingThinking = '';
+                            isThinkingPhase = false;
+                            isLoading = false;
+                            abortController = null;
                             hasUnsavedChanges = true;
-                        }
-                        isLoading = false;
-                        streamingMessage = '';
-                        streamingThinking = '';
-                        isThinkingPhase = false;
-                        abortController = null;
+
+                            // AI 回复完成后，自动保存当前会话
+                            await saveCurrentSession(true);
+                        },
+                        onError: (error: Error) => {
+                            if (error.message !== 'Request aborted') {
+                                // 将错误消息作为一条 assistant 消息添加
+                                const errorMessage: Message = {
+                                    role: 'assistant',
+                                    content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                };
+                                messages = [...messages, errorMessage];
+                                hasUnsavedChanges = true;
+                            }
+                            isLoading = false;
+                            streamingMessage = '';
+                            streamingThinking = '';
+                            isThinkingPhase = false;
+                            abortController = null;
+                        },
                     },
-                },
-                providerConfig.customApiUrl,
-                providerConfig.advancedConfig
-            );
+                    providerConfig.customApiUrl,
+                    providerConfig.advancedConfig
+                );
+            }
         } catch (error) {
             console.error('Regenerate message error:', error);
             // onError 回调已经处理了错误消息的添加，这里不需要重复添加
