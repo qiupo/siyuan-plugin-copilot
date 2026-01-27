@@ -215,17 +215,32 @@ export class MCPManager {
           "@modelcontextprotocol/sdk/client/stdio.js"
         );
 
-        // Fix PATH for macOS Electron environment to ensure npx/node can be found
+        // Fix PATH for macOS Electron environment to ensure npx/node/uvx can be found
         const env = { ...process.env, ...(config.env || {}) };
-        if (process.platform === 'darwin') {
+        if (process.platform === 'darwin' || process.platform === 'linux') {
+          const home = process.env.HOME || '';
           const commonPaths = [
             '/opt/homebrew/bin',
             '/usr/local/bin',
             '/usr/bin',
             '/bin',
             '/usr/sbin',
-            '/sbin'
+            '/sbin',
+            // uv / python tools often in .local/bin
+            `${home}/.local/bin`,
+            // cargo / rust tools
+            `${home}/.cargo/bin`,
+            // npm global installs
+            `${home}/.npm-global/bin`,
           ];
+          
+          // Try to find nvm path if possible
+          // This is a best-effort guess for nvm
+          if (home) {
+             // We can't easily guess nvm path without sourcing shell, 
+             // but we can encourage users to set absolute path or symlink if this fails.
+          }
+
           const currentPath = env.PATH || '';
           const pathParts = currentPath.split(':').filter(p => !!p);
           
@@ -244,6 +259,16 @@ export class MCPManager {
         });
       } catch (e) {
         console.error("Stdio transport failed to initialize", e);
+        if (e instanceof Error && (e as any).code === 'ENOENT') {
+          const cmd = config.command;
+          if (cmd === 'npx') {
+            throw new Error(`无法找到 npx 命令。请确保已安装 Node.js，或在系统 PATH 中包含 npx。您也可以尝试指定 npx 的绝对路径。`);
+          } else if (cmd === 'uvx') {
+            throw new Error(`无法找到 uvx 命令。请确保已安装 uv (Python 工具)，或在系统 PATH 中包含 uvx。`);
+          } else {
+             throw new Error(`无法找到命令: ${cmd}。请检查命令是否正确安装，或尝试使用绝对路径。`);
+          }
+        }
         throw e;
       }
       
