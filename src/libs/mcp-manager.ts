@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { MCPServerConfig } from "../defaultSettings";
 import type { Tool } from "../tools";
 import { getFrontend } from "siyuan";
+import process from "process";
 
 export class MCPManager {
   private clients: Map<string, Client> = new Map();
@@ -94,10 +95,33 @@ export class MCPManager {
         const { StdioClientTransport } = await import(
           "@modelcontextprotocol/sdk/client/stdio.js"
         );
+
+        // Fix PATH for macOS Electron environment to ensure npx/node can be found
+        const env = { ...process.env, ...(config.env || {}) };
+        if (process.platform === 'darwin') {
+          const commonPaths = [
+            '/opt/homebrew/bin',
+            '/usr/local/bin',
+            '/usr/bin',
+            '/bin',
+            '/usr/sbin',
+            '/sbin'
+          ];
+          const currentPath = env.PATH || '';
+          const pathParts = currentPath.split(':').filter(p => !!p);
+          
+          for (const p of commonPaths) {
+            if (!pathParts.includes(p)) {
+              pathParts.push(p);
+            }
+          }
+          env.PATH = pathParts.join(':');
+        }
+
         transport = new StdioClientTransport({
           command: config.command!,
           args: config.args,
-          env: config.env,
+          env: env,
         });
       } catch (e) {
         console.error("Stdio transport failed to initialize", e);
