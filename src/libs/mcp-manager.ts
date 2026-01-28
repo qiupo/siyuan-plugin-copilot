@@ -2,6 +2,8 @@ import { pushErrMsg, pushMsg } from "../api";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPServerConfig } from "../defaultSettings";
 import type { Tool } from "../tools";
 import { getFrontend } from "siyuan";
@@ -17,6 +19,44 @@ export class MCPManager {
   private notifiedConnections: Map<string, string> = new Map();
   private listeners: (() => void)[] = [];
   private initPromise: Promise<void> | null = null;
+  private patchStdioReadBuffer(
+    transport: StdioClientTransport,
+    serverName: string,
+  ) {
+    const anyTransport = transport as any;
+    const readBuffer = anyTransport?._readBuffer as any;
+    if (!readBuffer || typeof readBuffer.readMessage !== "function") {
+      return;
+    }
+    let warned = false;
+    readBuffer.readMessage = function () {
+      if (!this._buffer) {
+        return null;
+      }
+      while (true) {
+        const index = this._buffer.indexOf("\n");
+        if (index === -1) {
+          return null;
+        }
+        const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
+        this._buffer = this._buffer.subarray(index + 1);
+        if (!line.trim()) {
+          continue;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          if (!warned) {
+            console.warn(`[MCP] Ignored non-JSON stdout from ${serverName}`);
+            warned = true;
+          }
+          continue;
+        }
+        return JSONRPCMessageSchema.parse(parsed);
+      }
+    };
+  }
 
   constructor() {}
 
@@ -257,6 +297,7 @@ export class MCPManager {
           args: config.args,
           env: env,
         });
+        this.patchStdioReadBuffer(transport, config.name);
       } catch (e) {
         console.error("Stdio transport failed to initialize", e);
         if (e instanceof Error && (e as any).code === 'ENOENT') {
