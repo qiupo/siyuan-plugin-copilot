@@ -157,6 +157,163 @@
         chatMode: 'ask' as 'ask' | 'edit' | 'agent',
     };
 
+    const editModePrompt = `你是一个专业的笔记编辑助手。当用户要求修改内容时，你必须返回JSON格式的编辑指令。
+
+**关于上下文格式**：
+用户提供的上下文将以以下格式呈现：
+
+## 文档: 文档标题
+或
+## 块: 块内容预览
+
+**BlockID**: \`20240101120000-abc123\`
+
+\`\`\`markdown
+这里是kramdown格式的内容，包含块ID信息：
+段落内容
+{: id="20240101120100-def456"}
+
+* 列表项
+  {: id="20240101120200-ghi789"}
+\`\`\`
+
+**关于BlockID和kramdown格式**：
+- **顶层BlockID**：位于 \`\`\`markdown 代码块之前，格式为 **BlockID**: \`xxxxxxxxxx-xxxxxxx\`
+- **子块ID标记**：在markdown代码块内，格式为 {: id="20240101120100-def456"}
+- 段落块会有 {: id="..."} 标记
+- 列表项会有 {: id="..."} 标记  
+- 标题、代码块等各种块都有ID标记
+
+你可以编辑任何包含ID标记的块，包括：
+- 顶层文档/块（使用代码块外的BlockID）
+- 文档内的任何子块（使用代码块内的 {: id="xxx"}）
+
+**提取BlockID的方法**：
+- 从 **BlockID**: \`xxxxx\` 获取顶层块ID
+- 从 {: id="xxxxx"} 获取子块ID
+- BlockID格式通常为：时间戳-字符串，如 20240101120000-abc123
+
+编辑指令格式（必须严格遵循）：
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",  // 操作类型："update"=更新块（默认），"insert"=插入新块
+      "blockId": "要编辑的块ID（可以是顶层块或子块的ID）",
+      "newContent": "修改后的内容（kramdown格式，保留必要的ID标记）"
+    },
+    {
+      "operationType": "insert",  // 插入新块
+      "blockId": "参考块的ID（在此块前后插入）",
+      "position": "after",  // "before"=在参考块之前插入，"after"=在参考块之后插入（默认）
+      "newContent": "新插入的内容（kramdown格式）"
+    }
+  ]
+}
+\`\`\`
+
+重要规则：
+1. **必须返回JSON格式**：使用上述JSON结构，包裹在 \`\`\`json 代码块中
+2. **blockId 必须来自上下文**：从 [BlockID: xxx] 或 {: id="xxx"} 中提取
+3. **可以编辑任何有ID的块**：不限于顶层块，子块也可以精确编辑
+4. **可以插入新块**：使用 operationType: "insert" 在指定块前后插入新内容
+5. **newContent格式**：应该是kramdown格式，如果编辑子块，内容要包含该块的ID标记；插入新块时不需要ID标记
+6. **可以批量编辑**：在 editOperations 数组中包含多个编辑操作
+7. 思源笔记kramdown格式如果要添加颜色：应该是<span data-type="text">添加颜色的文字1</span>{: style="color: var(--b3-font-color1);"}，优先使用以下颜色变量：
+  - --b3-font-color1: 红色
+  - --b3-font-color2: 橙色
+  - --b3-font-color3: 蓝色
+  - --b3-font-color4: 绿色
+  - --b3-font-color5: 灰色
+8. **添加说明**：在JSON代码块之外，添加文字说明你的修改
+
+示例1 - 编辑顶层块：
+好的，我会帮你改进这段内容：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",
+      "blockId": "20240101120000-abc123",
+      "newContent": "这是修改后的整个文档内容\\n{: id=\\"20240101120000-abc123\\"}"
+    }
+  ]
+}
+\`\`\`
+
+示例2 - 编辑子块（推荐）：
+我会针对性地修改第二段和第三个列表项：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",
+      "blockId": "20240101120100-def456",
+      "newContent": "这是修改后的第二段内容，表达更专业。\\n{: id=\\"20240101120100-def456\\"}"
+    },
+    {
+      "operationType": "update",
+      "blockId": "20240101120200-ghi789",
+      "newContent": "* 这是修改后的列表项\\n  {: id=\\"20240101120200-ghi789\\"}"
+    }
+  ]
+}
+\`\`\`
+
+我针对需要改进的具体段落和列表项进行了精确修改。
+
+示例3 - 插入新块：
+我会在第二段后面插入一段补充说明：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "insert",
+      "blockId": "20240101120100-def456",
+      "position": "after",
+      "newContent": "这是新插入的补充段落，提供更多细节信息。"
+    }
+  ]
+}
+\`\`\`
+
+我在指定的段落后面添加了补充内容。
+
+示例4 - 混合操作：
+我会修改第一段并在其后插入新内容：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",
+      "blockId": "20240101120100-def456",
+      "newContent": "这是修改后的段落内容。\\n{: id=\\"20240101120100-def456\\"}"
+    },
+    {
+      "operationType": "insert",
+      "blockId": "20240101120100-def456",
+      "position": "after",
+      "newContent": "这是紧跟在修改段落后的新增内容。"
+    }
+  ]
+}
+\`\`\`
+
+我修改了原段落并在其后添加了补充信息。
+
+注意：
+- 优先编辑子块而不是整个文档，这样更精确且不会影响其他内容
+- 只有在用户明确要求修改内容时才返回JSON编辑指令
+- 如果只是回答问题，则正常回复即可，不要返回JSON
+- 确保JSON格式正确，可以被解析
+- 确保blockId来自上下文中的ID标记（**BlockID**: \`xxx\` 或 {: id="xxx"}）
+- newContent应保留kramdown的ID标记
+- **重要**：newContent中只包含修改后的正文内容，不要包含"## 文档"、"## 块"或"**BlockID**:"这样的上下文标识，这些只是用于你理解上下文的`;
+
     // 编辑模式
     type ChatMode = 'ask' | 'edit' | 'agent';
     let chatMode: ChatMode = 'ask';
@@ -1812,6 +1969,9 @@
         userContent: string,
         lastUserMessage: Message
     ) {
+        const isDeepseekThinkingAgent =
+            chatMode === 'agent' &&
+            currentProvider === 'deepseek';
         // 过滤掉空的 assistant 消息，防止某些 Provider（例如 Kimi）报错
         let messagesToSend = messages
             .filter(msg => {
@@ -1833,6 +1993,17 @@
                     role: msg.role,
                     content: msg.content,
                 };
+
+                if (msg.tool_calls) {
+                    baseMsg.tool_calls = msg.tool_calls;
+                }
+                if (msg.tool_call_id) {
+                    baseMsg.tool_call_id = msg.tool_call_id;
+                    baseMsg.name = msg.name;
+                }
+                if (isDeepseekThinkingAgent && msg.reasoning_content) {
+                    baseMsg.reasoning_content = msg.reasoning_content;
+                }
 
                 const isLastMessage = index === array.length - 1;
                 if (
@@ -2022,7 +2193,12 @@
         }
 
         // 添加系统提示词
-        if (settings.aiSystemPrompt) {
+        if (chatMode === 'edit') {
+            if (settings.aiSystemPrompt) {
+                messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
+            }
+            messagesToSend.unshift({ role: 'system', content: editModePrompt });
+        } else if (settings.aiSystemPrompt) {
             messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
         }
 
@@ -2645,164 +2821,6 @@
 
         // 根据模式添加系统提示词
         if (chatMode === 'edit') {
-            // 编辑模式的特殊系统提示词
-            const editModePrompt = `你是一个专业的笔记编辑助手。当用户要求修改内容时，你必须返回JSON格式的编辑指令。
-
-**关于上下文格式**：
-用户提供的上下文将以以下格式呈现：
-
-## 文档: 文档标题
-或
-## 块: 块内容预览
-
-**BlockID**: \`20240101120000-abc123\`
-
-\`\`\`markdown
-这里是kramdown格式的内容，包含块ID信息：
-段落内容
-{: id="20240101120100-def456"}
-
-* 列表项
-  {: id="20240101120200-ghi789"}
-\`\`\`
-
-**关于BlockID和kramdown格式**：
-- **顶层BlockID**：位于 \`\`\`markdown 代码块之前，格式为 **BlockID**: \`xxxxxxxxxx-xxxxxxx\`
-- **子块ID标记**：在markdown代码块内，格式为 {: id="20240101120100-def456"}
-- 段落块会有 {: id="..."} 标记
-- 列表项会有 {: id="..."} 标记  
-- 标题、代码块等各种块都有ID标记
-
-你可以编辑任何包含ID标记的块，包括：
-- 顶层文档/块（使用代码块外的BlockID）
-- 文档内的任何子块（使用代码块内的 {: id="xxx"}）
-
-**提取BlockID的方法**：
-- 从 **BlockID**: \`xxxxx\` 获取顶层块ID
-- 从 {: id="xxxxx"} 获取子块ID
-- BlockID格式通常为：时间戳-字符串，如 20240101120000-abc123
-
-编辑指令格式（必须严格遵循）：
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",  // 操作类型："update"=更新块（默认），"insert"=插入新块
-      "blockId": "要编辑的块ID（可以是顶层块或子块的ID）",
-      "newContent": "修改后的内容（kramdown格式，保留必要的ID标记）"
-    },
-    {
-      "operationType": "insert",  // 插入新块
-      "blockId": "参考块的ID（在此块前后插入）",
-      "position": "after",  // "before"=在参考块之前插入，"after"=在参考块之后插入（默认）
-      "newContent": "新插入的内容（kramdown格式）"
-    }
-  ]
-}
-\`\`\`
-
-重要规则：
-1. **必须返回JSON格式**：使用上述JSON结构，包裹在 \`\`\`json 代码块中
-2. **blockId 必须来自上下文**：从 [BlockID: xxx] 或 {: id="xxx"} 中提取
-3. **可以编辑任何有ID的块**：不限于顶层块，子块也可以精确编辑
-4. **可以插入新块**：使用 operationType: "insert" 在指定块前后插入新内容
-5. **newContent格式**：应该是kramdown格式，如果编辑子块，内容要包含该块的ID标记；插入新块时不需要ID标记
-6. **可以批量编辑**：在 editOperations 数组中包含多个编辑操作
-7. 思源笔记kramdown格式如果要添加颜色：应该是<span data-type="text">添加颜色的文字1</span>{: style="color: var(--b3-font-color1);"}，优先使用以下颜色变量：
-  - --b3-font-color1: 红色
-  - --b3-font-color2: 橙色
-  - --b3-font-color3: 蓝色
-  - --b3-font-color4: 绿色
-  - --b3-font-color5: 灰色
-8. **添加说明**：在JSON代码块之外，添加文字说明你的修改
-
-示例1 - 编辑顶层块：
-好的，我会帮你改进这段内容：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",
-      "blockId": "20240101120000-abc123",
-      "newContent": "这是修改后的整个文档内容\\n{: id=\\"20240101120000-abc123\\"}"
-    }
-  ]
-}
-\`\`\`
-
-示例2 - 编辑子块（推荐）：
-我会针对性地修改第二段和第三个列表项：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",
-      "blockId": "20240101120100-def456",
-      "newContent": "这是修改后的第二段内容，表达更专业。\\n{: id=\\"20240101120100-def456\\"}"
-    },
-    {
-      "operationType": "update",
-      "blockId": "20240101120200-ghi789",
-      "newContent": "* 这是修改后的列表项\\n  {: id=\\"20240101120200-ghi789\\"}"
-    }
-  ]
-}
-\`\`\`
-
-我针对需要改进的具体段落和列表项进行了精确修改。
-
-示例3 - 插入新块：
-我会在第二段后面插入一段补充说明：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "insert",
-      "blockId": "20240101120100-def456",
-      "position": "after",
-      "newContent": "这是新插入的补充段落，提供更多细节信息。"
-    }
-  ]
-}
-\`\`\`
-
-我在指定的段落后面添加了补充内容。
-
-示例4 - 混合操作：
-我会修改第一段并在其后插入新内容：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",
-      "blockId": "20240101120100-def456",
-      "newContent": "这是修改后的段落内容。\\n{: id=\\"20240101120100-def456\\"}"
-    },
-    {
-      "operationType": "insert",
-      "blockId": "20240101120100-def456",
-      "position": "after",
-      "newContent": "这是紧跟在修改段落后的新增内容。"
-    }
-  ]
-}
-\`\`\`
-
-我修改了原段落并在其后添加了补充信息。
-
-注意：
-- 优先编辑子块而不是整个文档，这样更精确且不会影响其他内容
-- 只有在用户明确要求修改内容时才返回JSON编辑指令
-- 如果只是回答问题，则正常回复即可，不要返回JSON
-- 确保JSON格式正确，可以被解析
-- 确保blockId来自上下文中的ID标记（**BlockID**: \`xxx\` 或 {: id="xxx"}）
-- newContent应保留kramdown的ID标记
-- **重要**：newContent中只包含修改后的正文内容，不要包含"## 文档"、"## 块"或"**BlockID**:"这样的上下文标识，这些只是用于你理解上下文的`;
-
             // 先添加用户的系统提示词（如果有）
             if (settings.aiSystemPrompt) {
                 messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
@@ -6647,200 +6665,17 @@
             }
         }
 
-        // 准备发送给AI的消息（包含系统提示词和上下文文档）
-        // 深拷贝消息数组，避免修改原始消息
-        let messagesToSend = messages
-            .filter(msg => msg.role !== 'system')
-            .map((msg, index, array) => {
-                const baseMsg: any = {
-                    role: msg.role,
-                    content: msg.content,
-                };
+        const userContent =
+            typeof lastUserMessage.content === 'string'
+                ? lastUserMessage.content
+                : getMessageText(lastUserMessage.content);
 
-                // 只处理历史用户消息的上下文（不是最后一条消息）
-                // 最后一条消息将在后面用最新内容处理
-                const isLastMessage = index === array.length - 1;
-                if (
-                    !isLastMessage &&
-                    msg.role === 'user' &&
-                    msg.contextDocuments &&
-                    msg.contextDocuments.length > 0
-                ) {
-                    const hasImages = msg.attachments?.some(att => att.type === 'image');
-
-                    // 获取原始消息内容
-                    const originalContent =
-                        typeof msg.content === 'string' ? msg.content : getMessageText(msg.content);
-
-                    // 构建上下文文本
-                    const contextText = msg.contextDocuments
-                        .map(doc => {
-                            const label = doc.type === 'doc' ? '文档' : '块';
-                            return `## ${label}: ${doc.title}\n\n**BlockID**: \`${doc.id}\`\n\n\`\`\`markdown\n${doc.content}\n\`\`\``;
-                        })
-                        .join('\n\n---\n\n');
-
-                    // 如果有图片附件，使用多模态格式
-                    if (hasImages) {
-                        const contentParts: any[] = [];
-
-                        // 添加文本内容和上下文
-                        let textContent = originalContent;
-                        textContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-                        contentParts.push({ type: 'text', text: textContent });
-
-                        // 添加图片
-                        msg.attachments?.forEach(att => {
-                            if (att.type === 'image') {
-                                contentParts.push({
-                                    type: 'image_url',
-                                    image_url: { url: att.data },
-                                });
-                            }
-                        });
-
-                        // 添加文本文件内容
-                        const fileTexts = msg.attachments
-                            ?.filter(att => att.type === 'file')
-                            .map(att => `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`)
-                            .join('\n\n---\n\n');
-
-                        if (fileTexts) {
-                            contentParts.push({
-                                type: 'text',
-                                text: `\n\n以下是附件文件内容：\n\n${fileTexts}`,
-                            });
-                        }
-
-                        baseMsg.content = contentParts;
-                    } else {
-                        // 纯文本格式
-                        let enhancedContent = originalContent;
-
-                        // 添加文本文件附件
-                        if (msg.attachments && msg.attachments.length > 0) {
-                            const attachmentTexts = msg.attachments
-                                .map(att => {
-                                    if (att.type === 'file') {
-                                        return `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`;
-                                    }
-                                    return '';
-                                })
-                                .filter(Boolean)
-                                .join('\n\n---\n\n');
-
-                            if (attachmentTexts) {
-                                enhancedContent += `\n\n---\n\n以下是附件内容：\n\n${attachmentTexts}`;
-                            }
-                        }
-
-                        // 添加上下文文档
-                        enhancedContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-
-                        baseMsg.content = enhancedContent;
-                    }
-                }
-
-                return baseMsg;
-            });
-
-        // 处理最后一条用户消息，添加附件和上下文文档
-        if (messagesToSend.length > 0) {
-            const lastMessage = messagesToSend[messagesToSend.length - 1];
-            if (lastMessage.role === 'user') {
-                const lastUserMessage = messages[messages.length - 1];
-                const hasImages = lastUserMessage.attachments?.some(att => att.type === 'image');
-
-                // 如果有图片附件，使用多模态格式
-                if (hasImages) {
-                    const contentParts: any[] = [];
-
-                    // 先添加用户输入
-                    let textContent =
-                        typeof lastUserMessage.content === 'string'
-                            ? lastUserMessage.content
-                            : getMessageText(lastUserMessage.content);
-
-                    // 然后添加上下文文档（如果有）
-                    if (contextDocumentsWithLatestContent.length > 0) {
-                        const contextText = contextDocumentsWithLatestContent
-                            .map(doc => {
-                                const label = doc.type === 'doc' ? '文档' : '块';
-                                return `## ${label}: ${doc.title}\n\n**BlockID**: \`${doc.id}\`\n\n\`\`\`markdown\n${doc.content}\n\`\`\``;
-                            })
-                            .join('\n\n---\n\n');
-                        textContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-                    }
-
-                    contentParts.push({ type: 'text', text: textContent });
-
-                    // 添加图片
-                    lastUserMessage.attachments?.forEach(att => {
-                        if (att.type === 'image') {
-                            contentParts.push({
-                                type: 'image_url',
-                                image_url: { url: att.data },
-                            });
-                        }
-                    });
-
-                    // 添加文本文件内容
-                    const fileTexts = lastUserMessage.attachments
-                        ?.filter(att => att.type === 'file')
-                        .map(att => `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`)
-                        .join('\n\n---\n\n');
-
-                    if (fileTexts) {
-                        contentParts.push({
-                            type: 'text',
-                            text: `\n\n以下是附件文件内容：\n\n${fileTexts}`,
-                        });
-                    }
-
-                    lastMessage.content = contentParts;
-                } else {
-                    // 纯文本格式
-                    let enhancedContent =
-                        typeof lastUserMessage.content === 'string'
-                            ? lastUserMessage.content
-                            : getMessageText(lastUserMessage.content);
-
-                    // 添加文本文件附件
-                    if (lastUserMessage.attachments && lastUserMessage.attachments.length > 0) {
-                        const attachmentTexts = lastUserMessage.attachments
-                            .map(att => {
-                                if (att.type === 'file') {
-                                    return `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`;
-                                }
-                                return '';
-                            })
-                            .filter(Boolean)
-                            .join('\n\n---\n\n');
-
-                        if (attachmentTexts) {
-                            enhancedContent += `\n\n---\n\n以下是附件内容：\n\n${attachmentTexts}`;
-                        }
-                    }
-
-                    // 添加上下文文档
-                    if (contextDocumentsWithLatestContent.length > 0) {
-                        const contextText = contextDocumentsWithLatestContent
-                            .map(doc => {
-                                const label = doc.type === 'doc' ? '文档' : '块';
-                                return `## ${label}: ${doc.title}\n\n**BlockID**: \`${doc.id}\`\n\n\`\`\`markdown\n${doc.content}\n\`\`\``;
-                            })
-                            .join('\n\n---\n\n');
-                        enhancedContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-                    }
-
-                    lastMessage.content = enhancedContent;
-                }
-            }
-        }
-
-        if (settings.aiSystemPrompt) {
-            messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
-        }
+        let messagesToSend = prepareMessagesForAI(
+            messages,
+            contextDocumentsWithLatestContent,
+            userContent,
+            lastUserMessage
+        );
 
         // 创建新的 AbortController
         abortController = new AbortController();
@@ -6907,7 +6742,9 @@
                             apiKey: providerConfig.apiKey,
                             model: modelConfig.id,
                             messages: messagesToSend,
-                            temperature: modelConfig.temperature,
+                            temperature: tempModelSettings.temperatureEnabled
+                                ? tempModelSettings.temperature
+                                : undefined,
                             maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
                             stream: true,
                             signal: abortController.signal,
@@ -7194,7 +7031,9 @@
                         apiKey: providerConfig.apiKey,
                         model: modelConfig.id,
                         messages: messagesToSend,
-                        temperature: modelConfig.temperature,
+                        temperature: tempModelSettings.temperatureEnabled
+                            ? tempModelSettings.temperature
+                            : undefined,
                         maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
                         stream: true,
                         signal: abortController.signal,
