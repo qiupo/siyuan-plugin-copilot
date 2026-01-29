@@ -19,6 +19,8 @@ export class MCPManager {
   private notifiedConnections: Map<string, string> = new Map();
   private listeners: (() => void)[] = [];
   private initPromise: Promise<void> | null = null;
+  private pendingConfigsStr: string | null = null;
+
   private patchStdioReadBuffer(
     transport: StdioClientTransport,
     serverName: string,
@@ -116,14 +118,27 @@ export class MCPManager {
   public async init(configs: MCPServerConfig[]) {
     console.log(`[MCP] init called with ${configs.length} configs:`, JSON.stringify(configs.map(c => ({id: c.id, name: c.name, enabled: c.enabled}))));
     
-    // Check if configs have changed to avoid unnecessary reconnections
-    if (JSON.stringify(configs) === JSON.stringify(this.configs) && !this.initPromise) {
+    const configsStr = JSON.stringify(configs);
+
+    // 1. Check if same init is currently in progress or queued
+    if (this.initPromise && this.pendingConfigsStr === configsStr) {
+      console.log(`[MCP] Init with same configs already in progress/queued, skipping`);
+      await this.initPromise;
+      return;
+    }
+
+    // 2. Check if configs have changed to avoid unnecessary reconnections
+    // Only check this if we are not currently initializing (otherwise we should rely on pendingConfigsStr)
+    if (!this.initPromise && JSON.stringify(this.configs) === configsStr) {
       console.log(`[MCP] Configs unchanged, skipping init`);
       return;
     }
 
+    this.pendingConfigsStr = configsStr;
+
     const runInit = async () => {
-      const normalizedConfigs = configs.map((config) => ({ ...config }));
+      try {
+        const normalizedConfigs = configs.map((config) => ({ ...config }));
       const idCounter = new Map<string, number>();
       const duplicates: string[] = [];
       for (const config of normalizedConfigs) {
@@ -224,6 +239,11 @@ export class MCPManager {
 
       await Promise.all(connectionPromises);
       this.notifyToolsUpdate();
+      } finally {
+        if (this.pendingConfigsStr === configsStr) {
+            this.pendingConfigsStr = null;
+        }
+      }
     };
 
     const chained = this.initPromise ? this.initPromise.then(runInit) : runInit();

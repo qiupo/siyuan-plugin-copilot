@@ -728,6 +728,18 @@
     }
 
 
+    // 打开设置面板
+    async function openSettingsPanel() {
+        await resetToAppliedSettings();
+        isPresetListOpen = false;
+        isSettingsOpen = true;
+        editingPresetId = '';
+        updateSettingsPosition();
+        setTimeout(() => {
+            document.addEventListener('click', closeSettingsOnOutsideClick);
+        }, 0);
+    }
+
     // 打开预设列表
     async function openPresetList() {
         isPresetListOpen = true;
@@ -1004,7 +1016,14 @@
                 </div>
             {:else}
                 <div class="model-settings-preset-menu-empty">
-                    {t('aiSidebar.modelSettings.noPresets')}
+                    <div style="margin-bottom: 8px;">{t('aiSidebar.modelSettings.noPresets')}</div>
+                    <button
+                        class="b3-button b3-button--text"
+                        on:click|stopPropagation={openSettingsPanel}
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconModelSetting"></use></svg>
+                        {t('aiSidebar.modelSettings.title') || '模型设置'}
+                    </button>
                 </div>
             {/if}
 
