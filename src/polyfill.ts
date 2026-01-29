@@ -103,3 +103,14 @@ if (shouldPolyfill()) {
 } else {
     console.log("[Siyuan Copilot] Polyfill skipped.");
 }
+
+export const env = safeProcess.env;
+export const version = safeProcess.version;
+export const platform = safeProcess.platform;
+export const nextTick = safeProcess.nextTick;
+export const cwd = safeProcess.cwd;
+export const stdin = safeProcess.stdin;
+export const stdout = safeProcess.stdout;
+export const stderr = safeProcess.stderr;
+
+export default safeProcess;

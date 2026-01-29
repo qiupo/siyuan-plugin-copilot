@@ -23,6 +23,8 @@ export default defineConfig({
     resolve: {
         alias: {
             "@": resolve(__dirname, "src"),
+            "node:process": resolve(__dirname, "src/polyfill.ts"),
+            "process": resolve(__dirname, "src/polyfill.ts"),
         }
     },
 
@@ -111,8 +113,6 @@ export default defineConfig({
 
             external: [
                 "siyuan", 
-                "process", 
-                "node:process", 
                 "node:stream", 
                 "node:events",
                 "node:util",
