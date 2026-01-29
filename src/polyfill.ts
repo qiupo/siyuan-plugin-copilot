@@ -4,10 +4,9 @@ import { getFrontend } from "siyuan";
 
 console.log("[Siyuan Copilot] Initializing process polyfill (Dependency-free version)");
 
+const proces = require("node:process")
 // Use globalThis to ensure we hit the global scope
-const target = typeof globalThis !== "undefined" ? globalThis : 
-               typeof window !== "undefined" ? window : 
-               typeof self !== "undefined" ? self : {};
+const target = proces
 
 const safeProcess = {
     env: {
@@ -104,13 +103,15 @@ if (shouldPolyfill()) {
     console.log("[Siyuan Copilot] Polyfill skipped.");
 }
 
-export const env = safeProcess.env;
-export const version = safeProcess.version;
-export const platform = safeProcess.platform;
-export const nextTick = safeProcess.nextTick;
-export const cwd = safeProcess.cwd;
-export const stdin = safeProcess.stdin;
-export const stdout = safeProcess.stdout;
-export const stderr = safeProcess.stderr;
+const exportProcess = target || safeProcess;
 
-export default safeProcess;
+export const env = exportProcess.env;
+export const version = exportProcess.version;
+export const platform = exportProcess.platform;
+export const nextTick = exportProcess.nextTick;
+export const cwd = exportProcess.cwd;
+export const stdin = exportProcess.stdin;
+export const stdout = exportProcess.stdout;
+export const stderr = exportProcess.stderr;
+
+export default exportProcess;

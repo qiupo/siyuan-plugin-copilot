@@ -7,7 +7,7 @@ import { JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { MCPServerConfig } from "../defaultSettings";
 import type { Tool } from "../tools";
 import { getFrontend } from "siyuan";
-import process from "process";
+import process from "../polyfill";
 
 export class MCPManager {
   private clients: Map<string, Client> = new Map();
