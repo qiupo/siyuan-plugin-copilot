@@ -9,6 +9,7 @@
     export let currentModelId = '';
     export let appliedSettings = {
         contextCount: 10,
+        maxContextTokens: 16384,
         temperature: 0.7,
         temperatureEnabled: true,
         systemPrompt: '',
@@ -37,6 +38,7 @@
 
     // 模型设置（临时值，用于编辑）
     let tempContextCount = 10;
+    let tempMaxContextTokens = 16384; // 最大上下文Token数
     let tempTemperature = 0.7;
     let tempTemperatureEnabled = false; // 是否启用temperature调整
     let tempSystemPrompt = '';
@@ -51,6 +53,7 @@
         id: string;
         name: string;
         contextCount: number;
+        maxContextTokens?: number; // 最大上下文Token数
         temperature: number;
         temperatureEnabled: boolean; // 是否启用temperature调整
         systemPrompt: string;
@@ -233,6 +236,7 @@
             id: Date.now().toString(),
             name: newPresetName.trim(),
             contextCount: tempContextCount,
+            maxContextTokens: tempMaxContextTokens,
             temperature: tempTemperature,
             temperatureEnabled: tempTemperatureEnabled,
             systemPrompt: tempSystemPrompt,
@@ -266,6 +270,7 @@
         const preset = presets.find(p => p.id === presetId);
         if (preset) {
             tempContextCount = preset.contextCount;
+            tempMaxContextTokens = preset.maxContextTokens ?? 16384;
             tempTemperature = preset.temperature;
             tempTemperatureEnabled = preset.temperatureEnabled ?? true; // 兼容旧预设
             tempSystemPrompt = preset.systemPrompt;
@@ -293,6 +298,7 @@
         const preset = presets.find(p => p.id === presetId);
         if (preset) {
             tempContextCount = preset.contextCount;
+            tempMaxContextTokens = preset.maxContextTokens ?? 16384;
             tempTemperature = preset.temperature;
             tempTemperatureEnabled = preset.temperatureEnabled ?? true;
             tempSystemPrompt = preset.systemPrompt;
@@ -439,6 +445,7 @@
         const preset = presets.find(p => p.id === presetId);
         if (preset) {
             preset.contextCount = tempContextCount;
+            preset.maxContextTokens = tempMaxContextTokens;
             preset.temperature = tempTemperature;
             preset.temperatureEnabled = tempTemperatureEnabled;
             preset.systemPrompt = tempSystemPrompt;
@@ -563,6 +570,7 @@
     function applySettings() {
         dispatch('apply', {
             contextCount: tempContextCount,
+            maxContextTokens: tempMaxContextTokens,
             temperature: tempTemperature,
             temperatureEnabled: tempTemperatureEnabled,
             systemPrompt: tempSystemPrompt,
@@ -643,6 +651,7 @@
     // 重置临时值为当前应用的设置
     async function resetToAppliedSettings() {
         tempContextCount = appliedSettings.contextCount;
+        tempMaxContextTokens = appliedSettings.maxContextTokens ?? 16384;
         tempTemperature = appliedSettings.temperature;
         tempTemperatureEnabled = appliedSettings.temperatureEnabled ?? true;
         tempSystemPrompt = appliedSettings.systemPrompt;
@@ -1065,13 +1074,32 @@
                     <input
                         type="range"
                         min="1"
-                        max="50"
+                        max="200"
                         step="1"
                         bind:value={tempContextCount}
                         class="b3-slider"
                     />
                     <div class="model-settings-hint">
                         {t('aiSidebar.modelSettings.contextCountHint')}
+                    </div>
+                </div>
+
+                <!-- Max Context Tokens Setting -->
+                <div class="model-settings-item">
+                    <label class="model-settings-label">
+                        {t('aiSidebar.modelSettings.maxContextTokens') || 'Max Tokens'}
+                        <span class="model-settings-value">{tempMaxContextTokens}</span>
+                    </label>
+                    <input
+                        type="range"
+                        min="1024"
+                        max="200000"
+                        step="1024"
+                        bind:value={tempMaxContextTokens}
+                        class="b3-slider"
+                    />
+                    <div class="model-settings-hint">
+                        {t('aiSidebar.modelSettings.maxContextTokensHint') || 'Limit context by token count (approximate)'}
                     </div>
                 </div>
 

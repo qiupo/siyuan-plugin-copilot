@@ -10,6 +10,8 @@
         type ThinkingEffort,
         isSupportedThinkingGeminiModel,
         isSupportedThinkingClaudeModel,
+        limitMessagesByTokens,
+        calculateTotalTokens,
     } from './ai-chat';
     import type { MessageContent } from './ai-chat';
     import { getActiveEditor } from 'siyuan';
@@ -148,6 +150,7 @@
     // 模型临时设置
     let tempModelSettings = {
         contextCount: 10,
+        maxContextTokens: 16384,
         temperature: 0.7,
         temperatureEnabled: true,
         systemPrompt: '',
@@ -155,6 +158,7 @@
         selectedModels: [] as Array<{ provider: string; modelId: string }>,
         enableMultiModel: false,
         chatMode: 'ask' as 'ask' | 'edit' | 'agent',
+        modelThinkingSettings: {} as Record<string, boolean>,
     };
 
     // 编辑模式
@@ -1181,6 +1185,7 @@
     async function handleApplyModelSettings(
         event: CustomEvent<{
             contextCount: number;
+            maxContextTokens: number;
             temperature: number;
             temperatureEnabled: boolean;
             systemPrompt: string;
@@ -1196,6 +1201,7 @@
         // 更新tempModelSettings，保持所有字段的状态
         tempModelSettings = {
             contextCount: newSettings.contextCount,
+            maxContextTokens: newSettings.maxContextTokens || 16384,
             temperature: newSettings.temperature,
             temperatureEnabled: newSettings.temperatureEnabled,
             systemPrompt: newSettings.systemPrompt,
@@ -2037,9 +2043,19 @@
             }
         }
 
-        // 限制上下文消息数量
+        // 限制上下文消息数量（优先使用 Token 限制，同时兼顾消息数量限制）
         const systemMessages = messagesToSend.filter(msg => msg.role === 'system');
-        const otherMessages = messagesToSend.filter(msg => msg.role !== 'system');
+        
+        // 1. 先基于 Token 数量限制（这是更准确的限制方式）
+        // 注意：limitMessagesByTokens 会返回包含 system 消息的列表
+        const tokenLimitedMessages = limitMessagesByTokens(messagesToSend, tempModelSettings.maxContextTokens || 16384);
+        
+        // 提取非 system 消息
+        const otherMessages = tokenLimitedMessages.filter(msg => msg.role !== 'system');
+        
+        // 2. 再基于消息数量限制（如果用户设置了较小的 count，仍然生效）
+        // 注意：由于 maxContextTokens 默认值可能较大，如果不限制 count，可能会包含过多消息
+        // 但如果用户想要利用大窗口（如200k），他们会调大 contextCount
         const limitedMessages = otherMessages.slice(-tempModelSettings.contextCount);
 
         // 建立 tool_call_id => tool 消息的索引，便于补全被截断的链条
@@ -2824,59 +2840,70 @@
             }
         }
 
-        // 限制上下文消息数量
+        // 限制上下文消息数量（基于 Token 且保持工具链完整性）
         const systemMessages = messagesToSend.filter(msg => msg.role === 'system');
         const otherMessages = messagesToSend.filter(msg => msg.role !== 'system');
-        const limitedMessages = otherMessages.slice(-tempModelSettings.contextCount);
-
-        // 建立 tool_call_id => tool 消息的索引，便于补全被截断的链条
-        const toolResultById = new Map<string, Message>();
-        for (const msg of otherMessages) {
-            if (msg.role === 'tool' && msg.tool_call_id) {
-                toolResultById.set(msg.tool_call_id, msg);
-            }
-        }
-
-        const limitedMessagesWithToolFix: Message[] = [];
-        const includedToolCallIds = new Set<string>();
-
-        for (const msg of limitedMessages) {
+        
+        // 1. 将消息分组为原子块（Chunks），确保工具链完整性
+        const chunks: Message[][] = [];
+        let i = 0;
+        while (i < otherMessages.length) {
+            const msg = otherMessages[i];
+            
             if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-                // 先推入 assistant
-                limitedMessagesWithToolFix.push(msg);
-
-                // 紧跟补全每一个 tool_call 的结果，保持顺序
-                for (const tc of msg.tool_calls) {
-                    const toolMsg = toolResultById.get(tc.id);
-                    if (toolMsg && !includedToolCallIds.has(tc.id)) {
-                        limitedMessagesWithToolFix.push(toolMsg);
-                        includedToolCallIds.add(tc.id);
+                // 开始一个工具链回合：Assistant(call) + Tool(results)
+                const chunk: Message[] = [msg];
+                let j = i + 1;
+                // 向后寻找属于这个 assistant 的 tool results
+                while (j < otherMessages.length) {
+                    const nextMsg = otherMessages[j];
+                    if (nextMsg.role === 'tool') {
+                         // 检查是否匹配 tool_calls 中的 id
+                         if (msg.tool_calls.some(tc => tc.id === nextMsg.tool_call_id)) {
+                             chunk.push(nextMsg);
+                             j++;
+                         } else {
+                             // 遇到不匹配的 tool，停止当前 chunk
+                             break;
+                         }
+                    } else {
+                        // 遇到非 tool 消息，回合结束
+                        break;
                     }
                 }
-                continue;
+                chunks.push(chunk);
+                i = j;
+            } else {
+                // 普通消息或孤立的 tool 消息（视为单独块）
+                chunks.push([msg]);
+                i++;
             }
-
-            if (msg.role === 'tool') {
-                // 仅在前一条是对应的 assistant 且未加入过时保留，避免孤立 tool
-                const prev = limitedMessagesWithToolFix[limitedMessagesWithToolFix.length - 1];
-                if (
-                    prev &&
-                    prev.role === 'assistant' &&
-                    prev.tool_calls?.some(tc => tc.id === msg.tool_call_id) &&
-                    msg.tool_call_id &&
-                    !includedToolCallIds.has(msg.tool_call_id)
-                ) {
-                    limitedMessagesWithToolFix.push(msg);
-                    includedToolCallIds.add(msg.tool_call_id);
-                }
-                continue;
-            }
-
-            // 其他消息正常保留
-            limitedMessagesWithToolFix.push(msg);
         }
 
-        messagesToSend = [...systemMessages, ...limitedMessagesWithToolFix];
+        // 2. 基于 Token 从后往前选择 Chunks
+        const systemTokens = calculateTotalTokens(systemMessages);
+        let remainingTokens = (tempModelSettings.maxContextTokens || 16384) - systemTokens;
+        
+        const keptChunks: Message[][] = [];
+        
+        // 从最新的 chunk 开始
+        for (let k = chunks.length - 1; k >= 0; k--) {
+            const chunk = chunks[k];
+            const chunkTokens = calculateTotalTokens(chunk);
+            
+            if (remainingTokens - chunkTokens >= 0) {
+                remainingTokens -= chunkTokens;
+                keptChunks.unshift(chunk);
+            } else {
+                // Token 不够了，停止
+                break;
+            }
+        }
+        
+        // 3. 展平为消息列表
+        const finalOtherMessages = keptChunks.flat();
+
+        messagesToSend = [...systemMessages, ...finalOtherMessages];
 
         // 创建新的 AbortController
         abortController = new AbortController();

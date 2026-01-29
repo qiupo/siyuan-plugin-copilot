@@ -209,6 +209,8 @@
             "title": "Model Settings",
             "contextCount": "Context Message Count",
             "contextCountHint": "Controls the number of messages included in conversation history",
+            "maxContextTokens": "Max Context Tokens",
+            "maxContextTokensHint": "Limit context by token count (approximate)",
             "temperature": "Temperature",
             "temperatureHint": "Controls randomness of generated text, higher value means more random",
             "enableTemperature": "Enable Temperature Adjustment",

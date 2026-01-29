@@ -1022,3 +1022,39 @@ export function calculateTotalTokens(messages: Message[]): number {
         }
     }, 0);
 }
+
+/**
+ * 根据Token限制截断消息列表
+ * @param messages 消息列表
+ * @param maxTokens 最大Token数
+ * @returns 截断后的消息列表
+ */
+export function limitMessagesByTokens(messages: Message[], maxTokens: number): Message[] {
+    // 始终保留 system 消息
+    const systemMessages = messages.filter(msg => msg.role === 'system');
+    const systemTokens = calculateTotalTokens(systemMessages);
+    
+    let remainingTokens = maxTokens - systemTokens;
+    if (remainingTokens <= 0) {
+        return systemMessages;
+    }
+
+    const otherMessages = messages.filter(msg => msg.role !== 'system');
+    const keptMessages: Message[] = [];
+    
+    // 从后往前添加消息
+    for (let i = otherMessages.length - 1; i >= 0; i--) {
+        const msg = otherMessages[i];
+        const msgTokens = calculateTotalTokens([msg]);
+        
+        if (remainingTokens - msgTokens < 0) {
+            break;
+        }
+        
+        remainingTokens -= msgTokens;
+        keptMessages.unshift(msg);
+    }
+    
+    // 合并 system 消息和保留的消息
+    return [...systemMessages, ...keptMessages];
+}
