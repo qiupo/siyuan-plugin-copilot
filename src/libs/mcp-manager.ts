@@ -138,7 +138,39 @@ export class MCPManager {
 
     const runInit = async () => {
       try {
+        let frontend = getFrontend();
+        console.log(`[MCP] RunInit frontend: ${frontend}`);
+
+        // Workaround: startup sometimes reports 'browser-desktop' momentarily before 'desktop'
+        if (frontend === "browser-desktop") {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const newFrontend = getFrontend();
+          if (newFrontend !== frontend) {
+            console.log(
+              `[MCP] Frontend changed from ${frontend} to ${newFrontend}`,
+            );
+            frontend = newFrontend;
+          }
+        }
+
         const normalizedConfigs = configs.map((config) => ({ ...config }));
+
+        if (frontend === "browser-desktop" || frontend === "browser-mobile") {
+          console.log(`[MCP] Environment ${frontend} does not support MCP. Disabling all configs.`);
+          if (configs.some(c => c.enabled)) {
+            // pushMsg(`当前环境 (${frontend}) 不支持 MCP 功能。`);
+          }
+          normalizedConfigs.forEach(c => c.enabled = false);
+        } else if (frontend === "mobile") {
+          normalizedConfigs.forEach(c => {
+            if (c.type === 'stdio' && c.enabled) {
+              console.log(`[MCP] Mobile environment does not support Stdio. Disabling ${c.name}.`);
+              pushMsg(`当前环境 (Mobile) 不支持 Stdio 连接 (${c.name})。`);
+              c.enabled = false;
+            }
+          });
+        }
+
       const idCounter = new Map<string, number>();
       const duplicates: string[] = [];
       for (const config of normalizedConfigs) {
@@ -257,18 +289,8 @@ export class MCPManager {
 
   private async connect(config: MCPServerConfig) {
     let transport;
-    console.log(`connect config: ${JSON.stringify(config)}`);
-    const frontend = getFrontend();
-    const isSupportStdio =
-      frontend === "desktop" || frontend === "desktop-window";
-    console.log(`frontend: ${JSON.stringify(frontend)} config.type: ${config.type} isSupportStdio:${isSupportStdio}`);
+    console.log(`[MCP] connect config: ${JSON.stringify(config)}`);
 
-    if (!isSupportStdio) {
-      const msg = `Stdio transport is not supported in this environment (${frontend}). Skipping ${config.name}. Please use SSE transport instead.`;
-      console.warn(msg);
-      // pushErrMsg(msg);
-      return;
-    }
     if (config.type === "stdio") {
       try {
         const { StdioClientTransport } = await import(

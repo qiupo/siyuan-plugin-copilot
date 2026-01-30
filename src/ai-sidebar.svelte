@@ -3616,6 +3616,11 @@
 
     // 处理键盘事件
     function handleKeydown(e: KeyboardEvent) {
+        // 如果正在使用输入法，直接返回
+        if (e.isComposing) {
+            return;
+        }
+
         const sendMode = settings.sendMessageShortcut || 'ctrl+enter';
 
         if (sendMode === 'ctrl+enter') {
