@@ -258,18 +258,18 @@ export class MCPManager {
   private async connect(config: MCPServerConfig) {
     let transport;
     console.log(`connect config: ${JSON.stringify(config)}`);
-    if (config.type === "stdio") {
-      const frontend = getFrontend();
-      const isSupportStdio =
-        frontend === "desktop" || frontend === "desktop-window";
-      console.log(`frontend: ${JSON.stringify(frontend)} config.type: ${config.type} isSupportStdio:${isSupportStdio}`);
+    const frontend = getFrontend();
+    const isSupportStdio =
+      frontend === "desktop" || frontend === "desktop-window";
+    console.log(`frontend: ${JSON.stringify(frontend)} config.type: ${config.type} isSupportStdio:${isSupportStdio}`);
 
-      if (!isSupportStdio) {
-        const msg = `Stdio transport is not supported in this environment (${frontend}). Skipping ${config.name}. Please use SSE transport instead.`;
-        console.warn(msg);
-        // pushErrMsg(msg);
-        return;
-      }
+    if (!isSupportStdio) {
+      const msg = `Stdio transport is not supported in this environment (${frontend}). Skipping ${config.name}. Please use SSE transport instead.`;
+      console.warn(msg);
+      // pushErrMsg(msg);
+      return;
+    }
+    if (config.type === "stdio") {
       try {
         const { StdioClientTransport } = await import(
           "@modelcontextprotocol/sdk/client/stdio.js"
