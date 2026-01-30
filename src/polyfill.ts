@@ -125,3 +125,30 @@ export const platform = (target as any).process.platform;
 // export const stderr = exportProcess.stderr;
 
 export default (target as any).process;
+
+// Polyfill for setTimeout().unref which is used by some Node.js libraries but missing in browser environment
+// In browser, setTimeout returns a number, so we add unref/ref methods to Number.prototype
+try {
+  if (typeof (Number.prototype as any).unref === "undefined") {
+    console.log("[Siyuan Copilot] Polyfilling Number.prototype.unref");
+    Object.defineProperty(Number.prototype, "unref", {
+      value: function () {
+        return this;
+      },
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  if (typeof (Number.prototype as any).ref === "undefined") {
+    Object.defineProperty(Number.prototype, "ref", {
+      value: function () {
+        return this;
+      },
+      writable: true,
+      configurable: true,
+    });
+  }
+} catch (e) {
+  console.error("[Siyuan Copilot] Failed to polyfill Number.prototype", e);
+}
