@@ -110,16 +110,18 @@ if (shouldPolyfill()) {
 } else {
   console.log("[Siyuan Copilot] Polyfill skipped.");
 }
+console.log(
+  "[Siyuan Copilot] process polyfill initialized:",
+  (target as any),
+);
 
-const exportProcess = (target || safeProcess) as any;
+// export const env = exportProcess.env;
+// export const version = exportProcess.version;
+export const platform = (target as any).process.platform;
+// export const nextTick = exportProcess.nextTick;
+// export const cwd = exportProcess.cwd;
+// export const stdin = exportProcess.stdin;
+// export const stdout = exportProcess.stdout;
+// export const stderr = exportProcess.stderr;
 
-export const env = exportProcess.env;
-export const version = exportProcess.version;
-export const platform = exportProcess.platform;
-export const nextTick = exportProcess.nextTick;
-export const cwd = exportProcess.cwd;
-export const stdin = exportProcess.stdin;
-export const stdout = exportProcess.stdout;
-export const stderr = exportProcess.stderr;
-
-export default exportProcess;
+export default (target as any).process;
