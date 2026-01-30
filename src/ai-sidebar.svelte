@@ -65,6 +65,7 @@
     let streamingMessage = '';
     let streamingThinking = ''; // 流式思考内容
     let isThinkingPhase = false; // 是否在思考阶段
+    let isStreamingThinkingCollapsed = false; // 流式思考过程是否折叠
     let settings: any = {};
     let messagesContainer: HTMLElement;
     let textareaElement: HTMLTextAreaElement;
@@ -2545,6 +2546,7 @@
         streamingMessage = '';
         streamingThinking = '';
         isThinkingPhase = false;
+        isStreamingThinkingCollapsed = false;
         hasUnsavedChanges = true;
         autoScroll = true; // 发送新消息时启用自动滚动
 
@@ -7900,24 +7902,33 @@
                 <!-- 显示流式思考过程 -->
                 {#if streamingThinking}
                     <div class="ai-message__thinking">
-                        <div class="ai-message__thinking-header">
-                            <svg class="ai-message__thinking-icon">
+                        <div
+                            class="ai-message__thinking-header"
+                            on:click={() =>
+                                (isStreamingThinkingCollapsed = !isStreamingThinkingCollapsed)}
+                        >
+                            <svg
+                                class="ai-message__thinking-icon"
+                                class:collapsed={isStreamingThinkingCollapsed}
+                            >
                                 <use xlink:href="#iconRight"></use>
                             </svg>
                             <span class="ai-message__thinking-title">
                                 💭 思考中{isThinkingPhase ? '...' : ' (已完成)'}
                             </span>
                         </div>
-                        {#if !isThinkingPhase}
-                            <div class="ai-message__thinking-content b3-typography">
-                                {@html formatMessage(streamingThinking)}
-                            </div>
-                        {:else}
-                            <div
-                                class="ai-message__thinking-content ai-message__thinking-content--streaming b3-typography"
-                            >
-                                {@html formatMessage(streamingThinking)}
-                            </div>
+                        {#if !isStreamingThinkingCollapsed}
+                            {#if !isThinkingPhase}
+                                <div class="ai-message__thinking-content b3-typography">
+                                    {@html formatMessage(streamingThinking)}
+                                </div>
+                            {:else}
+                                <div
+                                    class="ai-message__thinking-content ai-message__thinking-content--streaming b3-typography"
+                                >
+                                    {@html formatMessage(streamingThinking)}
+                                </div>
+                            {/if}
                         {/if}
                     </div>
                 {/if}
@@ -9817,7 +9828,7 @@
         .ai-message__content {
             background: var(--b3-theme-background);
             color: var(--b3-theme-on-background);
-            max-width: 90%;
+            max-width: 100%;
         }
 
         .ai-message__actions {
