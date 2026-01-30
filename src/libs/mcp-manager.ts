@@ -155,20 +155,13 @@ export class MCPManager {
 
         const normalizedConfigs = configs.map((config) => ({ ...config }));
 
-        if (frontend === "browser-desktop" || frontend === "browser-mobile") {
+        if (frontend !== "desktop" && frontend !== "desktop-window") {
           console.log(`[MCP] Environment ${frontend} does not support MCP. Disabling all configs.`);
-          if (configs.some(c => c.enabled)) {
-            // pushMsg(`当前环境 (${frontend}) 不支持 MCP 功能。`);
-          }
           normalizedConfigs.forEach(c => c.enabled = false);
-        } else if (frontend === "mobile") {
-          normalizedConfigs.forEach(c => {
-            if (c.type === 'stdio' && c.enabled) {
-              console.log(`[MCP] Mobile environment does not support Stdio. Disabling ${c.name}.`);
-              pushMsg(`当前环境 (Mobile) 不支持 Stdio 连接 (${c.name})。`);
-              c.enabled = false;
-            }
-          });
+        }
+
+        if (frontend === 'mobile' || frontend==='browser-mobile') {
+          pushMsg(`[MCP] 当前环境 (${frontend}) 不支持 MCP 功能。`);
         }
 
       const idCounter = new Map<string, number>();
