@@ -2,37 +2,45 @@
 // especially for @modelcontextprotocol/sdk which might reference process
 import { getFrontend } from "siyuan";
 
-console.log("[Siyuan Copilot] Initializing process polyfill (Dependency-free version)");
+console.log(
+  "[Siyuan Copilot] Initializing process polyfill (Dependency-free version)",
+);
 
-const proces = require("node:process")
-// Use globalThis to ensure we hit the global scope
-const target = proces
+const target =
+  typeof globalThis !== "undefined"
+    ? globalThis
+    : typeof window !== "undefined"
+      ? window
+      : typeof self !== "undefined"
+        ? self
+        : {};
 
 const safeProcess = {
-    env: {
-        // @ts-ignore
-        NODE_ENV: (import.meta && import.meta.env) ? import.meta.env.MODE : 'production',
-    },
-    version: '',
-    platform: 'browser',
-    nextTick: (cb: Function) => setTimeout(cb, 0),
-    cwd: () => '/',
-    // Mock stdio streams just in case
-    stdin: {
-        on: () => {},
-        removeListener: () => {},
-        read: () => null,
-    },
-    stdout: {
-        on: () => {},
-        removeListener: () => {},
-        write: () => {},
-    },
-    stderr: {
-        on: () => {},
-        removeListener: () => {},
-        write: () => {},
-    }
+  env: {
+    // @ts-ignore
+    NODE_ENV:
+      import.meta && import.meta.env ? import.meta.env.MODE : "production",
+  },
+  version: "",
+  platform: "browser",
+  nextTick: (cb: Function) => setTimeout(cb, 0),
+  cwd: () => "/",
+  // Mock stdio streams just in case
+  stdin: {
+    on: () => {},
+    removeListener: () => {},
+    read: () => null,
+  },
+  stdout: {
+    on: () => {},
+    removeListener: () => {},
+    write: () => {},
+  },
+  stderr: {
+    on: () => {},
+    removeListener: () => {},
+    write: () => {},
+  },
 };
 
 function shouldPolyfill() {
@@ -69,41 +77,41 @@ function shouldPolyfill() {
 }
 
 if (shouldPolyfill()) {
-    if (typeof (target as any).process === "undefined") {
-        console.log("[Siyuan Copilot] Polyfilling process (undefined)");
-        (target as any).process = safeProcess;
-    } else {
-        // Merge if exists but missing properties (e.g. some partial polyfills might exist)
-        console.log("[Siyuan Copilot] Polyfilling process (merging)");
-        const existing = (target as any).process;
-        if (!existing.platform) existing.platform = safeProcess.platform;
-        if (!existing.env) existing.env = safeProcess.env;
-        if (!existing.version) existing.version = safeProcess.version;
-        if (!existing.nextTick) existing.nextTick = safeProcess.nextTick;
-        if (!existing.cwd) existing.cwd = safeProcess.cwd;
-        
-        // Ensure stdio mocks exist
-        if (!existing.stdin) existing.stdin = safeProcess.stdin;
-        if (!existing.stdout) existing.stdout = safeProcess.stdout;
-        if (!existing.stderr) existing.stderr = safeProcess.stderr;
+  if (typeof (target as any).process === "undefined") {
+    console.log("[Siyuan Copilot] Polyfilling process (undefined)");
+    (target as any).process = safeProcess;
+  } else {
+    // Merge if exists but missing properties (e.g. some partial polyfills might exist)
+    console.log("[Siyuan Copilot] Polyfilling process (merging)");
+    const existing = (target as any).process;
+    if (!existing.platform) existing.platform = safeProcess.platform;
+    if (!existing.env) existing.env = safeProcess.env;
+    if (!existing.version) existing.version = safeProcess.version;
+    if (!existing.nextTick) existing.nextTick = safeProcess.nextTick;
+    if (!existing.cwd) existing.cwd = safeProcess.cwd;
+
+    // Ensure stdio mocks exist
+    if (!existing.stdin) existing.stdin = safeProcess.stdin;
+    if (!existing.stdout) existing.stdout = safeProcess.stdout;
+    if (!existing.stderr) existing.stderr = safeProcess.stderr;
+  }
+
+  // Double check and ensure window.process is set if we are in a window context
+  if (typeof window !== "undefined") {
+    try {
+      if ((window as any).process !== (target as any).process) {
+        console.log("[Siyuan Copilot] Syncing window.process");
+        (window as any).process = (target as any).process;
+      }
+    } catch (e) {
+      // ignore
     }
-    
-    // Double check and ensure window.process is set if we are in a window context
-    if (typeof window !== "undefined") {
-         try {
-            if ((window as any).process !== (target as any).process) {
-                console.log("[Siyuan Copilot] Syncing window.process");
-                (window as any).process = (target as any).process;
-            }
-         } catch (e) {
-             // ignore
-         }
-    }
+  }
 } else {
-    console.log("[Siyuan Copilot] Polyfill skipped.");
+  console.log("[Siyuan Copilot] Polyfill skipped.");
 }
 
-const exportProcess = target || safeProcess;
+const exportProcess = (target || safeProcess) as any;
 
 export const env = exportProcess.env;
 export const version = exportProcess.version;
