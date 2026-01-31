@@ -1,5 +1,13 @@
 ## v1.2.0 / 20260131
-- 
+- 🎨 如果模型预设没有开启temperature，默认使用平台设置的模型temperature
+- 🎨 平台的模型自定义参数默认折叠
+- 🎨 重新生成改进：重新生成始终采用用户选择的多模型或单模型方案，感谢[@lisontowind](https://github.com/lisontowind)
+- 🎨 公式转义允许 $ 后面紧跟数字，如果输入价格之类的需要手动转义，感谢[@lisontowind](https://github.com/lisontowind)
+- 🎨 修复代码块和公式混合复制，感谢[@lisontowind](https://github.com/lisontowind)
+
+
+
+
 
 ## v1.1.0 / 20260121
 - 🎨 支持公式复制 ([#102](https://github.com/Achuan-2/siyuan-plugin-copilot/issues/102))，感谢[@lisontowind](https://github.com/lisontowind)
