@@ -7,7 +7,8 @@
 - 🎨 改进模型预设选择交互：直接弹出预设列表进行选择和修改
 - 🎨 调用AI生成标题使用模型设置的temperature
 - 🎨 AI还没生成内容有等待效果
-
+- 🎨 每个session使用putfile单独存储为json文件sessions/sessionsID.json
+- 🎨 图片附件保存为图片，不使用base64存储，减少session.json体积
 
 
 
