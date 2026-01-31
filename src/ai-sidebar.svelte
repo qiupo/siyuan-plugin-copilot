@@ -165,6 +165,91 @@
     type DiffViewMode = 'diff' | 'split';
     let diffViewMode: DiffViewMode = 'diff'; // diff查看模式：diff或split
 
+    // 图片查看器
+    let isImageViewerOpen = false;
+    let currentImageSrc = '';
+    let currentImageName = '';
+
+    // 打开图片查看器
+    function openImageViewer(src: string, name: string) {
+        currentImageSrc = src;
+        currentImageName = name;
+        isImageViewerOpen = true;
+    }
+
+    // 关闭图片查看器
+    function closeImageViewer() {
+        isImageViewerOpen = false;
+        currentImageSrc = '';
+        currentImageName = '';
+    }
+
+    // 下载图片
+    async function downloadImage(src: string, filename: string) {
+        try {
+            const link = document.createElement('a');
+            link.href = src;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            pushMsg('图片下载成功');
+        } catch (error) {
+            console.error('下载图片失败:', error);
+            pushErrMsg('下载图片失败');
+        }
+    }
+
+    // 复制图片为PNG
+    async function copyImageAsPng(src: string) {
+        try {
+            const response = await fetch(src);
+            const blob = await response.blob();
+
+            // 如果已经是 image/png，直接复制
+            if (blob.type === 'image/png') {
+                await navigator.clipboard.write([
+                    new ClipboardItem({
+                        'image/png': blob,
+                    }),
+                ]);
+            } else {
+                // 否则转换为 PNG
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.src = URL.createObjectURL(blob);
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = reject;
+                });
+
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) throw new Error('无法创建 Canvas 上下文');
+                ctx.drawImage(img, 0, 0);
+
+                const pngBlob = await new Promise<Blob | null>(resolve =>
+                    canvas.toBlob(resolve, 'image/png')
+                );
+                if (!pngBlob) throw new Error('转换图片失败');
+
+                await navigator.clipboard.write([
+                    new ClipboardItem({
+                        'image/png': pngBlob,
+                    }),
+                ]);
+                URL.revokeObjectURL(img.src);
+            }
+
+            pushMsg('图片已复制到剪贴板');
+        } catch (error) {
+            console.error('复制图片失败:', error);
+            pushErrMsg('复制图片失败，请尝试下载后复制');
+        }
+    }
+
     // 当模式切换时，更新已添加的上下文文档内容
     $: if (chatMode) {
         updateContextDocumentsForMode();
@@ -840,6 +925,8 @@
         selectedTabIndex;
         selectedAnswerIndex;
         thinkingCollapsed;
+        streamingMessage;
+        streamingThinking;
 
         tick().then(async () => {
             if (messagesContainer) {
@@ -851,6 +938,7 @@
                 cleanupCodeBlocks(messagesContainer);
                 renderMathFormulas(messagesContainer);
                 setupBlockRefLinks(messagesContainer);
+                setupImageClickHandlers(messagesContainer);
             }
         });
     }
@@ -1641,10 +1729,11 @@
 
         // 准备消息数组（包含上下文）
         // 对于重新生成的情况，使用已有的上下文；对于新消息，使用新获取的上下文
-        const contextToUse = isRegenerate && lastUserMessage.contextDocuments 
-            ? lastUserMessage.contextDocuments 
-            : contextDocumentsWithLatestContent;
-        
+        const contextToUse =
+            isRegenerate && lastUserMessage.contextDocuments
+                ? lastUserMessage.contextDocuments
+                : contextDocumentsWithLatestContent;
+
         const messagesToSend = prepareMessagesForAI(
             messages,
             contextToUse,
@@ -1661,7 +1750,9 @@
         // 如果有无效模型，给出提示
         if (validModels.length < selectedMultiModels.length) {
             const invalidCount = selectedMultiModels.length - validModels.length;
-            pushMsg(`有 ${invalidCount} 个模型已从配置中删除，将使用剩余的 ${validModels.length} 个模型`);
+            pushMsg(
+                `有 ${invalidCount} 个模型已从配置中删除，将使用剩余的 ${validModels.length} 个模型`
+            );
         }
 
         // 如果没有有效模型，退回到单模型
@@ -1814,9 +1905,15 @@
                             : getMessageText(msg.content || []);
                     const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
                     const hasReasoning = !!msg.reasoning_content;
-                    const hasGeneratedImages = msg.generatedImages && msg.generatedImages.length > 0;
+                    const hasGeneratedImages =
+                        msg.generatedImages && msg.generatedImages.length > 0;
                     // 保留有 tool_calls、reasoning_content 或 generatedImages 的 assistant 消息，即便正文为空
-                    return (text && text.toString().trim() !== '') || hasToolCalls || hasReasoning || hasGeneratedImages;
+                    return (
+                        (text && text.toString().trim() !== '') ||
+                        hasToolCalls ||
+                        hasReasoning ||
+                        hasGeneratedImages
+                    );
                 }
                 return true;
             })
@@ -1922,17 +2019,25 @@
                 const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
                 if (lastAssistantMsg) {
                     // 检查generatedImages或attachments中的图片
-                    if (lastAssistantMsg.generatedImages && lastAssistantMsg.generatedImages.length > 0) {
+                    if (
+                        lastAssistantMsg.generatedImages &&
+                        lastAssistantMsg.generatedImages.length > 0
+                    ) {
                         previousGeneratedImages = lastAssistantMsg.generatedImages.map(img => ({
                             type: 'image_url',
-                            image_url: { url: `data:${img.mimeType || 'image/png'};base64,${img.data}` }
+                            image_url: {
+                                url: `data:${img.mimeType || 'image/png'};base64,${img.data}`,
+                            },
                         }));
-                    } else if (lastAssistantMsg.attachments && lastAssistantMsg.attachments.length > 0) {
+                    } else if (
+                        lastAssistantMsg.attachments &&
+                        lastAssistantMsg.attachments.length > 0
+                    ) {
                         previousGeneratedImages = lastAssistantMsg.attachments
                             .filter(att => att.type === 'image')
                             .map(att => ({
                                 type: 'image_url',
-                                image_url: { url: att.data }
+                                image_url: { url: att.data },
                             }));
                     } else if (typeof lastAssistantMsg.content === 'string') {
                         // 从Markdown内容中提取图片URL ![image](url)
@@ -1942,7 +2047,7 @@
                         while ((match = imageRegex.exec(content)) !== null) {
                             previousGeneratedImages.push({
                                 type: 'image_url',
-                                image_url: { url: match[1] }
+                                image_url: { url: match[1] },
                             });
                         }
                     }
@@ -2572,17 +2677,25 @@
                 const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
                 if (lastAssistantMsg) {
                     // 检查generatedImages或attachments中的图片
-                    if (lastAssistantMsg.generatedImages && lastAssistantMsg.generatedImages.length > 0) {
+                    if (
+                        lastAssistantMsg.generatedImages &&
+                        lastAssistantMsg.generatedImages.length > 0
+                    ) {
                         previousGeneratedImages = lastAssistantMsg.generatedImages.map(img => ({
                             type: 'image_url' as const,
-                            image_url: { url: `data:${img.mimeType || 'image/png'};base64,${img.data}` }
+                            image_url: {
+                                url: `data:${img.mimeType || 'image/png'};base64,${img.data}`,
+                            },
                         }));
-                    } else if (lastAssistantMsg.attachments && lastAssistantMsg.attachments.length > 0) {
+                    } else if (
+                        lastAssistantMsg.attachments &&
+                        lastAssistantMsg.attachments.length > 0
+                    ) {
                         previousGeneratedImages = lastAssistantMsg.attachments
                             .filter(att => att.type === 'image')
                             .map(att => ({
                                 type: 'image_url' as const,
-                                image_url: { url: att.data }
+                                image_url: { url: att.data },
                             }));
                     } else if (typeof lastAssistantMsg.content === 'string') {
                         // 从Markdown内容中提取图片URL ![image](url)
@@ -2592,7 +2705,7 @@
                         while ((match = imageRegex.exec(content)) !== null) {
                             previousGeneratedImages.push({
                                 type: 'image_url' as const,
-                                image_url: { url: match[1] }
+                                image_url: { url: match[1] },
                             });
                         }
                     }
@@ -3947,7 +4060,7 @@
                         if (!mathElement.hasAttribute('data-content')) {
                             mathElement.setAttribute('data-content', mathContent);
                         }
-                        
+
                         const html = katex.renderToString(mathContent, {
                             throwOnError: false,
                             displayMode: false,
@@ -3978,7 +4091,7 @@
                         if (!mathElement.hasAttribute('data-content')) {
                             mathElement.setAttribute('data-content', mathContent);
                         }
-                        
+
                         const html = katex.renderToString(mathContent, {
                             throwOnError: false,
                             displayMode: true,
@@ -4215,6 +4328,45 @@
         });
     }
 
+    // 为消息中的图片添加点击事件，调用图片查看器
+    function setupImageClickHandlers(element: HTMLElement) {
+        if (!element) return;
+
+        tick().then(() => {
+            try {
+                // 查找所有图片 img
+                const images = element.querySelectorAll(
+                    '.ai-message__content img, .ai-message__thinking-content img'
+                );
+
+                images.forEach((img: HTMLImageElement) => {
+                    // 检查是否已经添加过监听器
+                    if (img.hasAttribute('data-image-viewer-listener')) {
+                        return;
+                    }
+
+                    // 标记已添加监听器
+                    img.setAttribute('data-image-viewer-listener', 'true');
+                    img.style.cursor = 'zoom-in';
+
+                    // 添加点击事件监听器
+                    img.addEventListener('click', (event: Event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+
+                        const src = img.getAttribute('src');
+                        const alt = img.getAttribute('alt') || 'image';
+                        if (src) {
+                            openImageViewer(src, alt);
+                        }
+                    });
+                });
+            } catch (error) {
+                console.error('Setup image click handlers error:', error);
+            }
+        });
+    }
+
     // 复制单条消息
     function copyMessage(content: string | MessageContent[]) {
         const textContent = typeof content === 'string' ? content : getMessageText(content);
@@ -4284,7 +4436,7 @@
             // 获取选中内容的HTML
             const div = document.createElement('div');
             div.appendChild(range.cloneContents());
-            
+
             // 检查选区是否包含代码块或 code 元素
             // 使用更可靠的方式：检查选区开始/结束节点的祖先是否包含 code/pre
             const startContainer = range.startContainer as Node | null;
@@ -4297,10 +4449,12 @@
                 endContainer && endContainer.nodeType === Node.ELEMENT_NODE
                     ? (endContainer as Element)
                     : (endContainer?.parentElement as Element | null);
-            
+
             // 检查是否包含公式元素
-            const containsMath = !!div.querySelector('.language-math, [data-subtype="math"], .katex');
-            
+            const containsMath = !!div.querySelector(
+                '.language-math, [data-subtype="math"], .katex'
+            );
+
             // 检查是否在纯代码块内（开始和结束都在代码块内，且不包含公式）
             let isPureCodeBlock = false;
             if (!containsMath) {
@@ -4316,12 +4470,12 @@
             } else {
                 // 包含公式或混合内容，使用占位符方式处理
                 const { html, placeholders } = extractMathFormulasToPlaceholders(div);
-                
+
                 // 使用思源的 Lute 将 HTML 转换为 Markdown
                 if (window.Lute) {
                     const lute = window.Lute.New();
                     let markdown = lute.HTML2Md(html);
-                    
+
                     // 将占位符还原为公式
                     markdown = restorePlaceholdersToFormulas(markdown, placeholders);
 
@@ -4342,10 +4496,13 @@
     }
 
     // 提取公式并替换为占位符，避免被 Lute 转义
-    function extractMathFormulasToPlaceholders(container: HTMLElement): { html: string; placeholders: Map<string, string> } {
+    function extractMathFormulasToPlaceholders(container: HTMLElement): {
+        html: string;
+        placeholders: Map<string, string>;
+    } {
         const placeholders = new Map<string, string>();
         let placeholderIndex = 0;
-        
+
         // 生成唯一的占位符ID
         const generatePlaceholder = (formula: string, isBlock: boolean): string => {
             const id = `MATHFORMULA${placeholderIndex}ENDMATHFORMULA`;
@@ -4353,30 +4510,34 @@
             placeholders.set(id, isBlock ? `\n$$\n${formula}\n$$\n` : `$${formula}$`);
             return id;
         };
-        
+
         // 处理新格式的行内公式 span.language-math
         const inlineMathElements = Array.from(container.querySelectorAll('span.language-math'));
         inlineMathElements.forEach((mathElement: HTMLElement) => {
             let originalContent = mathElement.getAttribute('data-content');
-            
+
             if (!originalContent) {
-                const annotation = mathElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = mathElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             if (!originalContent) {
                 // 尝试从未渲染的元素中提取
                 const mathSpans = mathElement.querySelectorAll('span.katex-mathml');
                 if (mathSpans.length > 0) {
-                    const annotation = mathSpans[0].querySelector('annotation[encoding="application/x-tex"]');
+                    const annotation = mathSpans[0].querySelector(
+                        'annotation[encoding="application/x-tex"]'
+                    );
                     if (annotation) {
                         originalContent = annotation.textContent?.trim() || '';
                     }
                 }
             }
-            
+
             if (originalContent) {
                 const placeholder = generatePlaceholder(originalContent, false);
                 const textNode = document.createTextNode(placeholder);
@@ -4388,24 +4549,28 @@
         const blockMathElements = Array.from(container.querySelectorAll('div.language-math'));
         blockMathElements.forEach((mathElement: HTMLElement) => {
             let originalContent = mathElement.getAttribute('data-content');
-            
+
             if (!originalContent) {
-                const annotation = mathElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = mathElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             if (!originalContent) {
                 const mathSpans = mathElement.querySelectorAll('span.katex-mathml');
                 if (mathSpans.length > 0) {
-                    const annotation = mathSpans[0].querySelector('annotation[encoding="application/x-tex"]');
+                    const annotation = mathSpans[0].querySelector(
+                        'annotation[encoding="application/x-tex"]'
+                    );
                     if (annotation) {
                         originalContent = annotation.textContent?.trim() || '';
                     }
                 }
             }
-            
+
             if (originalContent) {
                 const placeholder = generatePlaceholder(originalContent, true);
                 const textNode = document.createTextNode(placeholder);
@@ -4417,14 +4582,16 @@
         const oldMathElements = Array.from(container.querySelectorAll('[data-subtype="math"]'));
         oldMathElements.forEach((mathElement: HTMLElement) => {
             let originalContent = mathElement.getAttribute('data-content');
-            
+
             if (!originalContent) {
-                const annotation = mathElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = mathElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             if (originalContent) {
                 const placeholder = generatePlaceholder(originalContent, false);
                 const textNode = document.createTextNode(placeholder);
@@ -4439,15 +4606,17 @@
             if (!katexElement.parentNode) {
                 return;
             }
-            
+
             let originalContent = '';
-            
+
             // 首先尝试从 KaTeX 的 MathML annotation 中获取
-            const annotation = katexElement.querySelector('annotation[encoding="application/x-tex"]');
+            const annotation = katexElement.querySelector(
+                'annotation[encoding="application/x-tex"]'
+            );
             if (annotation) {
                 originalContent = annotation.textContent?.trim() || '';
             }
-            
+
             // 如果没有，尝试从父元素的 data-content 获取
             if (!originalContent) {
                 const parent = katexElement.parentElement;
@@ -4455,7 +4624,7 @@
                     originalContent = parent.getAttribute('data-content') || '';
                 }
             }
-            
+
             if (originalContent) {
                 const isDisplay = katexElement.classList.contains('katex-display');
                 const placeholder = generatePlaceholder(originalContent, isDisplay);
@@ -4463,28 +4632,31 @@
                 katexElement.parentNode?.replaceChild(textNode, katexElement);
             }
         });
-        
+
         return { html: container.innerHTML, placeholders };
     }
-    
+
     // 将占位符还原为公式
-    function restorePlaceholdersToFormulas(markdown: string, placeholders: Map<string, string>): string {
+    function restorePlaceholdersToFormulas(
+        markdown: string,
+        placeholders: Map<string, string>
+    ): string {
         let result = markdown;
-        
+
         // 按照占位符ID排序，确保按顺序替换
         const sortedPlaceholders = Array.from(placeholders.entries()).sort((a, b) => {
             const aNum = parseInt(a[0].match(/\d+/)?.[0] || '0');
             const bNum = parseInt(b[0].match(/\d+/)?.[0] || '0');
             return aNum - bNum;
         });
-        
+
         sortedPlaceholders.forEach(([placeholder, formula]) => {
             // 使用全局替换，处理可能被 Lute 转义的情况
             result = result.split(placeholder).join(formula);
             // 也处理可能被转义的版本
             result = result.split(placeholder.replace(/\$/g, '\\$')).join(formula);
         });
-        
+
         return result;
     }
 
@@ -4494,20 +4666,22 @@
         const inlineMathElements = container.querySelectorAll('span.language-math');
         inlineMathElements.forEach((mathElement: HTMLElement) => {
             let originalContent = mathElement.getAttribute('data-content');
-            
+
             // 如果没有 data-content 属性，尝试从 KaTeX annotation 获取
             if (!originalContent) {
-                const annotation = mathElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = mathElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             // 如果还是没有，尝试从原始 textContent 获取（渲染前的状态）
             if (!originalContent) {
                 originalContent = mathElement.textContent?.trim() || '';
             }
-            
+
             if (originalContent) {
                 // 还原为行内公式格式 $...$
                 const textNode = document.createTextNode(`$${originalContent}$`);
@@ -4519,20 +4693,22 @@
         const blockMathElements = container.querySelectorAll('div.language-math');
         blockMathElements.forEach((mathElement: HTMLElement) => {
             let originalContent = mathElement.getAttribute('data-content');
-            
+
             // 如果没有 data-content 属性，尝试从 KaTeX annotation 获取
             if (!originalContent) {
-                const annotation = mathElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = mathElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             // 如果还是没有，尝试从原始 textContent 获取
             if (!originalContent) {
                 originalContent = mathElement.textContent?.trim() || '';
             }
-            
+
             if (originalContent) {
                 // 还原为块级公式格式 $$...$$
                 const textNode = document.createTextNode(`\n$$\n${originalContent}\n$$\n`);
@@ -4544,14 +4720,16 @@
         const oldMathElements = container.querySelectorAll('[data-subtype="math"]');
         oldMathElements.forEach((mathElement: HTMLElement) => {
             let originalContent = mathElement.getAttribute('data-content');
-            
+
             if (!originalContent) {
-                const annotation = mathElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = mathElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             if (originalContent) {
                 const textNode = document.createTextNode(`$${originalContent}$`);
                 mathElement.parentNode?.replaceChild(textNode, mathElement);
@@ -4565,32 +4743,38 @@
             if (!katexElement.parentNode) {
                 return;
             }
-            
+
             let originalContent = '';
-            
+
             // 首先尝试从父元素的 data-content 获取
             const parent = katexElement.parentElement;
             if (parent) {
                 originalContent = parent.getAttribute('data-content') || '';
             }
-            
+
             // 如果没有，尝试从 annotation 标签中获取原始 LaTeX（KaTeX 渲染时会添加）
             if (!originalContent) {
-                const annotation = katexElement.querySelector('annotation[encoding="application/x-tex"]');
+                const annotation = katexElement.querySelector(
+                    'annotation[encoding="application/x-tex"]'
+                );
                 if (annotation) {
                     originalContent = annotation.textContent?.trim() || '';
                 }
             }
-            
+
             if (originalContent) {
                 // 判断是行内还是块级公式
                 const isDisplay = katexElement.classList.contains('katex-display');
-                const textNode = isDisplay 
+                const textNode = isDisplay
                     ? document.createTextNode(`\n$$\n${originalContent}\n$$\n`)
                     : document.createTextNode(`$${originalContent}$`);
-                
+
                 // 如果父元素有特殊标记（如 language-math），替换父元素，否则替换 katex 元素本身
-                if (parent && (parent.classList.contains('language-math') || parent.hasAttribute('data-subtype'))) {
+                if (
+                    parent &&
+                    (parent.classList.contains('language-math') ||
+                        parent.hasAttribute('data-subtype'))
+                ) {
                     parent.parentNode?.replaceChild(textNode, parent);
                 } else {
                     katexElement.parentNode?.replaceChild(textNode, katexElement);
@@ -6151,6 +6335,18 @@
                 isPromptSelectorOpen = false;
             }
         }
+
+        // 关闭图片查看器
+        if (isImageViewerOpen && !target.closest('.image-viewer')) {
+            // 确保不是点击了触发开启图片的元素
+            if (
+                !target.closest('.ai-message__content img') &&
+                !target.closest('.ai-message__thinking-content img') &&
+                !target.closest('.ai-message__attachment-image')
+            ) {
+                closeImageViewer();
+            }
+        }
     }
 
     // 编辑模式相关函数
@@ -6805,17 +7001,25 @@
                 const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
                 if (lastAssistantMsg) {
                     // 检查generatedImages或attachments中的图片
-                    if (lastAssistantMsg.generatedImages && lastAssistantMsg.generatedImages.length > 0) {
+                    if (
+                        lastAssistantMsg.generatedImages &&
+                        lastAssistantMsg.generatedImages.length > 0
+                    ) {
                         previousGeneratedImages = lastAssistantMsg.generatedImages.map(img => ({
                             type: 'image_url' as const,
-                            image_url: { url: `data:${img.mimeType || 'image/png'};base64,${img.data}` }
+                            image_url: {
+                                url: `data:${img.mimeType || 'image/png'};base64,${img.data}`,
+                            },
                         }));
-                    } else if (lastAssistantMsg.attachments && lastAssistantMsg.attachments.length > 0) {
+                    } else if (
+                        lastAssistantMsg.attachments &&
+                        lastAssistantMsg.attachments.length > 0
+                    ) {
                         previousGeneratedImages = lastAssistantMsg.attachments
                             .filter(att => att.type === 'image')
                             .map(att => ({
                                 type: 'image_url' as const,
-                                image_url: { url: att.data }
+                                image_url: { url: att.data },
                             }));
                     } else if (typeof lastAssistantMsg.content === 'string') {
                         // 从Markdown内容中提取图片URL ![image](url)
@@ -6825,7 +7029,7 @@
                         while ((match = imageRegex.exec(content)) !== null) {
                             previousGeneratedImages.push({
                                 type: 'image_url' as const,
-                                image_url: { url: match[1] }
+                                image_url: { url: match[1] },
                             });
                         }
                     }
@@ -7035,7 +7239,7 @@
                                 type: 'image' as const,
                                 name: `generated-image-${idx + 1}.${img.mimeType?.split('/')[1] || 'png'}`,
                                 data: `data:${img.mimeType || 'image/png'};base64,${img.data}`,
-                                mimeType: img.mimeType || 'image/png'
+                                mimeType: img.mimeType || 'image/png',
                             }));
                         }
 
@@ -7502,6 +7706,12 @@
                                                         src={attachment.data}
                                                         alt={attachment.name}
                                                         class="ai-message__attachment-image"
+                                                        on:click={() =>
+                                                            openImageViewer(
+                                                                attachment.data,
+                                                                attachment.name
+                                                            )}
+                                                        title="点击查看大图"
                                                     />
                                                     <span class="ai-message__attachment-name">
                                                         {attachment.name}
@@ -9168,6 +9378,44 @@
                     <svg class="b3-button__icon"><use xlink:href="#iconCheck"></use></svg>
                     {t('tools.approve')}
                 </button>
+            </div>
+        </div>
+    {/if}
+
+    <!-- 图片查看器 -->
+    {#if isImageViewerOpen}
+        <div class="image-viewer">
+            <div class="image-viewer__header">
+                <h3 class="image-viewer__title">{currentImageName || '图片预览'}</h3>
+                <div class="image-viewer__actions">
+                    <button
+                        class="b3-button b3-button--text"
+                        on:click={() => copyImageAsPng(currentImageSrc)}
+                        title="复制图片"
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
+                        <span>复制</span>
+                    </button>
+                    <button
+                        class="b3-button b3-button--text"
+                        on:click={() =>
+                            downloadImage(currentImageSrc, currentImageName || 'image.png')}
+                        title="下载图片"
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconDownload"></use></svg>
+                        <span>下载</span>
+                    </button>
+                    <button
+                        class="b3-button b3-button--text"
+                        on:click={closeImageViewer}
+                        title="关闭"
+                    >
+                        <svg class="b3-button__icon"><use xlink:href="#iconClose"></use></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="image-viewer__content">
+                <img src={currentImageSrc} alt={currentImageName} class="image-viewer__image" />
             </div>
         </div>
     {/if}
@@ -12297,6 +12545,88 @@
         .b3-button__icon {
             width: 20px !important;
             height: 20px !important;
+        }
+    }
+
+    // 图片查看器样式
+    .image-viewer {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--b3-theme-background);
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        z-index: 1001;
+        max-width: 90vw;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .image-viewer__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--b3-border-color);
+        background: var(--b3-theme-surface);
+    }
+
+    .image-viewer__title {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--b3-theme-on-background);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 300px;
+    }
+
+    .image-viewer__actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+
+        .b3-button {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+
+            span {
+                font-size: 12px;
+            }
+        }
+    }
+
+    .image-viewer__content {
+        padding: 16px;
+        overflow: auto;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 200px;
+        max-height: calc(90vh - 80px);
+    }
+
+    .image-viewer__image {
+        max-width: 100%;
+        max-height: calc(90vh - 112px);
+        object-fit: contain;
+        border-radius: 4px;
+    }
+
+    // 让消息中的图片可点击
+    .ai-message__attachment-image,
+    :global(.ai-message__content img),
+    :global(.ai-message__thinking-content img) {
+        cursor: zoom-in;
+        transition: opacity 0.2s;
+
+        &:hover {
+            opacity: 0.9;
         }
     }
 </style>
