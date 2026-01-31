@@ -12,6 +12,10 @@
     export let config: ProviderConfig;
     export let isCustomProvider: boolean = false; // 是否为自定义平台
 
+    // 内置平台列表（不需要自定义参数）
+    const builtInProviders = ['gemini', 'deepseek', 'openai', 'moonshot', 'volcano', 'v3'];
+    $: isBuiltInProvider = builtInProviders.includes(providerId);
+
     const dispatch = createEventDispatcher();
 
     let isLoadingModels = false;
@@ -26,6 +30,7 @@
     let showApiKey = false; // 控制 API Key 是否显示明文
     let showAdvancedConfig = false; // 控制高级设置是否显示
     let customBodyErrors: { [modelId: string]: string | null } = {}; // 跟踪每个模型的 JSON 验证错误
+    let showCustomBodyForModel: { [modelId: string]: boolean } = {}; // 控制每个模型的自定义参数折叠/展开
 
     // 验证 JSON 字符串（支持嵌套 JSON）
     function validateJsonString(str: string): { valid: boolean; error?: string; formatted?: string } {
@@ -432,8 +437,7 @@
             >
                 <svg class="b3-button__icon" style="transition: transform 0.2s">
                     <use
-                        xlink:href="#iconDown"
-                        style="transform: rotate({showAdvancedConfig ? 0 : -90}deg)"
+                        xlink:href="{showAdvancedConfig ? '#iconDown' : '#iconRight'}"
                     ></use>
                 </svg>
                 <span>{t('platform.advanced')}</span>
@@ -577,33 +581,47 @@
                                     updateModel(model.id, 'maxTokens', model.maxTokens)}
                             />
                         </div>
+                        <!-- 自定义参数设置（所有平台都显示，默认折叠） -->
                         <div class="model-config-item">
-                            <div class="custom-body-header">
-                                <span>{t('models.customBody')} </span>
-                                {#if model.customBody && validateJsonString(model.customBody).valid}
-                                    <button 
-                                        class="format-json-btn"
-                                        title="格式化 JSON"
-                                        on:click={() => formatCustomBodyJson(model.id, model.customBody || '')}
-                                    >
-                                        <svg class="b3-button__icon" style="width: 12px; height: 12px; color: var(--b3-theme-on-surface);">
-                                            <use xlink:href="#iconFormat"></use>
-                                        </svg>
-                                    </button>
-                                {/if}
-                            </div>
-                            <textarea
-                                class="b3-text-field custom-body-textarea"
-                                class:json-error={customBodyErrors[model.id]}
-                                class:json-valid={model.customBody && !customBodyErrors[model.id] && validateJsonString(model.customBody).valid}
-                                style="height: 80px; resize: vertical; font-family: monospace; font-size: 12px;"
-                                value={model.customBody || ''}
-                                placeholder={'支持嵌套 JSON，例如：\n{\n  "key": "value",\n  "nested": { "a": 1 }\n}'}
-                                on:input={(e) =>
-                                    handleCustomBodyChange(model.id, e.currentTarget.value)}
-                            />
-                            {#if customBodyErrors[model.id]}
-                                <div class="json-error-hint">{customBodyErrors[model.id]}</div>
+                            <button
+                                class="custom-body-toggle"
+                                on:click={() => showCustomBodyForModel[model.id] = !showCustomBodyForModel[model.id]}
+                            >
+                                <svg class="b3-button__icon">
+                                    <use xlink:href={showCustomBodyForModel[model.id] ? '#iconDown' : '#iconRight'}></use>
+                                </svg>
+                                <span>{t('models.customBody')}</span>
+                            </button>
+
+                            {#if showCustomBodyForModel[model.id]}
+                                <div class="custom-body-content">
+                                    <div class="custom-body-header">
+                                        {#if model.customBody && validateJsonString(model.customBody).valid}
+                                            <button
+                                                class="format-json-btn"
+                                                title="格式化 JSON"
+                                                on:click={() => formatCustomBodyJson(model.id, model.customBody || '')}
+                                            >
+                                                <svg class="b3-button__icon" style="width: 12px; height: 12px; color: var(--b3-theme-on-surface);">
+                                                    <use xlink:href="#iconFormat"></use>
+                                                </svg>
+                                            </button>
+                                        {/if}
+                                    </div>
+                                    <textarea
+                                        class="b3-text-field custom-body-textarea"
+                                        class:json-error={customBodyErrors[model.id]}
+                                        class:json-valid={model.customBody && !customBodyErrors[model.id] && validateJsonString(model.customBody).valid}
+                                        style="width: 100%; height: 80px; resize: vertical; font-family: monospace; font-size: 12px;"
+                                        value={model.customBody || ''}
+                                        placeholder={'支持嵌套 JSON，例如：\n{\n  "key": "value",\n  "nested": { "a": 1 }\n}'}
+                                        on:input={(e) =>
+                                            handleCustomBodyChange(model.id, e.currentTarget.value)}
+                                    />
+                                    {#if customBodyErrors[model.id]}
+                                        <div class="json-error-hint">{customBodyErrors[model.id]}</div>
+                                    {/if}
+                                </div>
                             {/if}
                         </div>
                         <div class="model-config-item">
@@ -1142,6 +1160,35 @@
         background: var(--b3-theme-surface);
         border-radius: 4px;
         border-left: 3px solid var(--b3-theme-primary);
+    }
+
+    // 自定义参数折叠按钮样式
+    .custom-body-toggle {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 0;
+        width: 100%;
+        justify-content: flex-start;
+        color: var(--b3-theme-on-surface);
+        font-size: 12px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        transition: color 0.2s;
+
+        &:hover {
+            color: var(--b3-theme-on-background);
+        }
+
+        .b3-button__icon {
+            width: 14px;
+            height: 14px;
+        }
+    }
+
+    .custom-body-content {
+        margin-top: 8px;
     }
 
     // 自定义参数 JSON 样式

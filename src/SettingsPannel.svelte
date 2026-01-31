@@ -22,12 +22,12 @@
     }
 
     const builtInProviderNames: Record<string, string> = {
+        v3: t('platform.builtIn.v3'),
         gemini: t('platform.builtIn.gemini'),
+        openai: t('platform.builtIn.openai'),
         deepseek: t('platform.builtIn.deepseek'),
         moonshot: t('platform.builtIn.moonshot'),
-        openai: t('platform.builtIn.openai'),
         volcano: t('platform.builtIn.volcano'),
-        v3: t('platform.builtIn.v3'),
     };
 
     // 内置平台的默认 API 地址

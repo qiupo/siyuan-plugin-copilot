@@ -493,8 +493,19 @@ async function chatOpenAIFormat(
         requestBody.tool_choice = 'auto'; // 让模型自动决定是否调用工具
     }
 
-    // 如果启用思考模式，添加相关参数
-    if (options.enableThinking) {
+    // 处理思考模式：界面控制优先
+    // 如果界面未启用思考模式，删除自定义参数中可能存在的思考模式设置
+    if (!options.enableThinking) {
+        // 删除可能来自自定义参数的思考模式字段
+        delete requestBody.thinking;
+        delete requestBody.reasoning_effort;
+        delete requestBody.enable_thinking;
+        if (requestBody.extra_body?.google?.thinking_config) {
+            delete requestBody.extra_body.google.thinking_config;
+        }
+    } else {
+        // 如果启用思考模式，添加相关参数
+        // 注意：这里在自定义参数之后设置，确保界面控制的思考模式优先级最高
         const reasoningEffort = options.reasoningEffort || 'medium';
 
         // 检查是否是 Claude 模型（通过 OpenAI 兼容 API）
@@ -656,11 +667,19 @@ async function chatGeminiFormat(
         generationConfig: {
             temperature: options.temperature || 0.7,
             maxOutputTokens: options.maxTokens
-        }
+        },
+        ...options.customBody // 合并自定义参数
     };
 
-    // 如果启用思考模式，添加 thinkingConfig 参数
-    if (options.enableThinking) {
+    // 处理思考模式：界面控制优先
+    // 如果界面未启用思考模式，删除自定义参数中可能存在的思考模式设置
+    if (!options.enableThinking) {
+        if (requestBody.generationConfig?.thinkingConfig) {
+            delete requestBody.generationConfig.thinkingConfig;
+        }
+    } else {
+        // 如果启用思考模式，添加 thinkingConfig 参数
+        // 这会覆盖自定义参数中的设置
         requestBody.generationConfig.thinkingConfig = {
             thinkingBudget: -1, // -1 表示动态思考
             includeThoughts: true // 包含思考过程

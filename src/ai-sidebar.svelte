@@ -1579,18 +1579,25 @@
             }
         }
 
-        // 创建用户消息
-        const userMessage: Message = {
-            role: 'user',
-            content: userContent,
-            attachments: userAttachments.length > 0 ? userAttachments : undefined,
-            contextDocuments:
-                contextDocumentsWithLatestContent.length > 0
-                    ? contextDocumentsWithLatestContent
-                    : undefined,
-        };
+        // 检查最后一条消息是否已经是用户消息（重新生成的情况）
+        const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+        const isRegenerate = lastMessage && lastMessage.role === 'user' && !userContent;
 
-        messages = [...messages, userMessage];
+        // 只有在不是重新生成的情况下才创建新的用户消息
+        if (!isRegenerate) {
+            // 创建用户消息
+            const userMessage: Message = {
+                role: 'user',
+                content: userContent,
+                attachments: userAttachments.length > 0 ? userAttachments : undefined,
+                contextDocuments:
+                    contextDocumentsWithLatestContent.length > 0
+                        ? contextDocumentsWithLatestContent
+                        : undefined,
+            };
+
+            messages = [...messages, userMessage];
+        }
         currentInput = '';
         currentAttachments = [];
         contextDocuments = [];
@@ -1601,36 +1608,70 @@
         isAborted = false; // 重置中断标志
 
         // 如果是第一条用户消息且没有会话ID，立即创建会话
-        const userMessages = messages.filter(m => m.role === 'user');
-        if (userMessages.length === 1 && !currentSessionId) {
-            const now = Date.now();
-            const newSession: ChatSession = {
-                id: `session_${now}`,
-                title: generateSessionTitle(),
-                messages: [...messages],
-                createdAt: now,
-                updatedAt: now,
-            };
-            sessions = [newSession, ...sessions];
-            currentSessionId = newSession.id;
-            await saveSessions();
+        // 只有在非重新生成的情况下才执行
+        if (!isRegenerate) {
+            const userMessages = messages.filter(m => m.role === 'user');
+            if (userMessages.length === 1 && !currentSessionId) {
+                const now = Date.now();
+                const newSession: ChatSession = {
+                    id: `session_${now}`,
+                    title: generateSessionTitle(),
+                    messages: [...messages],
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                sessions = [newSession, ...sessions];
+                currentSessionId = newSession.id;
+                await saveSessions();
 
-            // 立即执行自动重命名
-            autoRenameSession(userContent);
+                // 立即执行自动重命名
+                autoRenameSession(userContent);
+            }
         }
 
         await scrollToBottom(true);
 
+        // 获取最后一条用户消息（用于 prepareMessagesForAI）
+        const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+        if (!lastUserMessage) {
+            pushErrMsg(t('aiSidebar.errors.noUserMessage'));
+            isLoading = false;
+            return;
+        }
+
         // 准备消息数组（包含上下文）
+        // 对于重新生成的情况，使用已有的上下文；对于新消息，使用新获取的上下文
+        const contextToUse = isRegenerate && lastUserMessage.contextDocuments 
+            ? lastUserMessage.contextDocuments 
+            : contextDocumentsWithLatestContent;
+        
         const messagesToSend = prepareMessagesForAI(
             messages,
-            contextDocumentsWithLatestContent,
-            userContent,
-            userMessage
+            contextToUse,
+            lastUserMessage.content as string,
+            lastUserMessage
         );
 
-        // 初始化多模型响应数组
-        multiModelResponses = selectedMultiModels.map(model => {
+        // 过滤掉无效的模型并初始化多模型响应数组
+        const validModels = selectedMultiModels.filter(model => {
+            const config = getProviderAndModelConfig(model.provider, model.modelId);
+            return config !== null;
+        });
+
+        // 如果有无效模型，给出提示
+        if (validModels.length < selectedMultiModels.length) {
+            const invalidCount = selectedMultiModels.length - validModels.length;
+            pushMsg(`有 ${invalidCount} 个模型已从配置中删除，将使用剩余的 ${validModels.length} 个模型`);
+        }
+
+        // 如果没有有效模型，退回到单模型
+        if (validModels.length === 0) {
+            pushErrMsg('所选的多模型已全部失效，请重新选择模型');
+            enableMultiModel = false;
+            return;
+        }
+
+        multiModelResponses = validModels.map(model => {
             const config = getProviderAndModelConfig(model.provider, model.modelId);
             return {
                 provider: model.provider,
@@ -1647,8 +1688,8 @@
         // 创建新的 AbortController
         abortController = new AbortController();
 
-        // 并发请求所有模型
-        const promises = selectedMultiModels.map(async (model, index) => {
+        // 并发请求所有有效模型
+        const promises = validModels.map(async (model, index) => {
             const config = getProviderAndModelConfig(model.provider, model.modelId);
             if (!config) return;
 
@@ -3556,6 +3597,10 @@
             // 检查window.Lute是否存在
             if (typeof window !== 'undefined' && (window as any).Lute) {
                 const lute = (window as any).Lute.New();
+                // 启用行内数学公式支持，将 $...$ 解析为 <span class="language-math">...</span>
+                lute.SetInlineMath(true);
+                // 允许 $ 后面紧跟数字，如 $7.24 s$
+                lute.SetInlineMathAllowDigitAfterOpenMarker(true);
                 // 使用Md2HTML将markdown转换为HTML，而不是Md2BlockDOM
                 // Md2HTML不会生成带data-node-id的块级结构，可以正常跨块选择文本
                 const html = lute.Md2HTML(textContent);
@@ -4176,25 +4221,23 @@
                     ? (endContainer as Element)
                     : (endContainer?.parentElement as Element | null);
             
-            // 检查是否在代码块内（排除公式元素）
-            let ancestorContainsCode = false;
-            if (startElem && !startElem.closest('.language-math, [data-subtype="math"], .katex')) {
-                ancestorContainsCode = !!startElem.closest('pre, code');
-            }
-            if (endElem && !endElem.closest('.language-math, [data-subtype="math"], .katex')) {
-                ancestorContainsCode = ancestorContainsCode || !!endElem.closest('pre, code');
-            }
+            // 检查是否包含公式元素
+            const containsMath = !!div.querySelector('.language-math, [data-subtype="math"], .katex');
             
-            // 同时检查 cloneContents 中是否包含高亮器 span（排除公式）
-            const hasHighlightedSpan = !!div.querySelector('[class*="hljs-"], pre > code, code[class*="language-"]:not(.language-math)');
-            const containsCodeBlock = ancestorContainsCode || hasHighlightedSpan;
+            // 检查是否在纯代码块内（开始和结束都在代码块内，且不包含公式）
+            let isPureCodeBlock = false;
+            if (!containsMath) {
+                const startInCode = startElem && !!startElem.closest('pre, code');
+                const endInCode = endElem && !!endElem.closest('pre, code');
+                isPureCodeBlock = startInCode && endInCode;
+            }
 
-            // 如果选区为代码块或包含高亮 / 具有典型代码特征（如下划线+括号/分号/=），认为是代码片段
-            if (containsCodeBlock) {
+            // 如果是纯代码块选择（不包含公式），使用纯文本复制
+            if (isPureCodeBlock) {
                 const text = selection.toString();
                 event.clipboardData?.setData('text/plain', text);
             } else {
-                // 使用占位符方式处理公式，避免被 Lute 转义
+                // 包含公式或混合内容，使用占位符方式处理
                 const { html, placeholders } = extractMathFormulasToPlaceholders(div);
                 
                 // 使用思源的 Lute 将 HTML 转换为 Markdown
@@ -6445,7 +6488,7 @@
             messages = messages.slice(0, index);
             hasUnsavedChanges = true;
 
-            // 重新添加该用户消息并发送
+            // 重新添加该用户消息
             const userMessage: Message = {
                 role: 'user',
                 content: targetMessage.content,
@@ -6466,28 +6509,53 @@
             return;
         }
 
-        // 如果之前使用了多模型，且在问答模式下，重新使用多模型
-        if (useMultiModel && previousMultiModels.length > 0 && chatMode === 'ask') {
-            // 过滤掉无效的模型（提供商或模型已被删除）
-            const validPreviousModels = previousMultiModels.filter(model => {
-                const config = getProviderAndModelConfig(model.provider, model.modelId);
-                return config !== null;
-            });
+        // 处理多模型重新生成的逻辑
+        // 情况1：之前使用了多模型，且用户当前启用了多模型，优先使用当前用户设置的模型列表
+        // 情况2：用户当前启用了多模型，使用当前选择的多模型
+        // 情况3：用户关闭了多模型，使用单模型
+        if (chatMode === 'ask') {
+            // 检查是否应该使用多模型
+            let shouldUseMultiModel = false;
+            let modelsToUse: Array<{ provider: string; modelId: string }> = [];
 
-            // 如果没有有效的模型，回退到单模型生成
-            if (validPreviousModels.length === 0) {
-                pushMsg(
-                    t('aiSidebar.info.noValidMultiModels') ||
-                        '之前选择的多模型已失效，将使用当前选择的模型重新生成'
-                );
-                // 继续执行后面的单模型生成逻辑
-            } else {
+            // 只有当用户当前启用了多模型时，才考虑使用多模型
+            if (enableMultiModel && selectedMultiModels.length > 0) {
+                // 优先使用当前用户设置的模型列表
+                const validCurrentModels = selectedMultiModels.filter(model => {
+                    const config = getProviderAndModelConfig(model.provider, model.modelId);
+                    return config !== null;
+                });
+
+                if (validCurrentModels.length > 0) {
+                    // 使用当前有效的模型
+                    shouldUseMultiModel = true;
+                    modelsToUse = validCurrentModels;
+                } else {
+                    // 当前设置的模型都无效，检查是否之前有使用多模型
+                    if (useMultiModel && previousMultiModels.length > 0) {
+                        const validPreviousModels = previousMultiModels.filter(model => {
+                            const config = getProviderAndModelConfig(model.provider, model.modelId);
+                            return config !== null;
+                        });
+
+                        if (validPreviousModels.length > 0) {
+                            pushMsg('当前选择的多模型无效，将使用之前的模型重新生成');
+                            shouldUseMultiModel = true;
+                            modelsToUse = validPreviousModels;
+                        }
+                    }
+                }
+            }
+            // 情况3：用户关闭了多模型，不使用多模型（继续执行后续单模型逻辑）
+
+            // 如果应该使用多模型，则调用多模型发送
+            if (shouldUseMultiModel && modelsToUse.length > 0) {
                 // 临时保存当前的多模型选择
                 const originalMultiModels = [...selectedMultiModels];
                 const originalEnableMultiModel = enableMultiModel;
 
-                // 设置为之前使用的有效模型
-                selectedMultiModels = validPreviousModels;
+                // 设置为要使用的模型
+                selectedMultiModels = modelsToUse;
                 enableMultiModel = true;
 
                 // 调用多模型发送
@@ -6746,6 +6814,17 @@
             messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
         }
 
+        // 使用临时系统提示词（如果设置了）
+        if (tempModelSettings.systemPrompt.trim()) {
+            // 如果已有系统提示词，替换它；否则添加新的
+            const systemMsgIndex = messagesToSend.findIndex(msg => msg.role === 'system');
+            if (systemMsgIndex !== -1) {
+                messagesToSend[systemMsgIndex].content = tempModelSettings.systemPrompt;
+            } else {
+                messagesToSend.unshift({ role: 'system', content: tempModelSettings.systemPrompt });
+            }
+        }
+
         // 创建新的 AbortController
         abortController = new AbortController();
 
@@ -6781,7 +6860,9 @@
                     apiKey: providerConfig.apiKey,
                     model: modelConfig.id,
                     messages: messagesToSend,
-                    temperature: modelConfig.temperature,
+                    temperature: tempModelSettings.temperatureEnabled
+                        ? tempModelSettings.temperature
+                        : modelConfig.temperature,
                     maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
                     stream: true,
                     signal: abortController.signal,
@@ -7768,7 +7849,7 @@
                                                 <use xlink:href="#iconRight"></use>
                                             </svg>
                                             <span class="ai-message__thinking-title">
-                                                💭 {t('aiSidebar.thinkingProcess')}
+                                                💭 {t('aiSidebar.messages.thinking')}
                                             </span>
                                         </div>
                                         {#if !response.thinkingCollapsed}
