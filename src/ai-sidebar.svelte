@@ -34,7 +34,7 @@
         putFile,
         removeFile,
     } from './api';
-    import { saveAsset, loadAsset, base64ToBlob } from './utils/assets';
+    import { saveAsset, loadAsset, base64ToBlob, readAssetAsText } from './utils/assets';
     import ModelSelector from './components/ModelSelector.svelte';
     import MultiModelSelector from './components/MultiModelSelector.svelte';
     import SessionManager from './components/SessionManager.svelte';
@@ -740,6 +740,15 @@
         currentProvider = settings.currentProvider || '';
         currentModelId = settings.currentModelId || '';
 
+        // 确保必要的存储目录存在
+        try {
+            const emptyBlob = new Blob([''], { type: 'text/plain' });
+            await putFile('/data/storage/petal/siyuan-plugin-copilot/sessions', true, emptyBlob);
+            await putFile('/data/storage/petal/siyuan-plugin-copilot/assets', true, emptyBlob);
+        } catch (e) {
+            // 目录可能已存在
+        }
+
         // 初始化多模型选择，过滤掉无效的模型
         selectedMultiModels = (settings.selectedMultiModels || []).filter(model => {
             const config = getProviderAndModelConfig(model.provider, model.modelId);
@@ -984,12 +993,6 @@
             return;
         }
 
-        // 检查文件大小 (最大 10MB)
-        if (file.size > 10 * 1024 * 1024) {
-            pushErrMsg(t('aiSidebar.errors.imageTooLarge'));
-            return;
-        }
-
         try {
             isUploadingFile = true;
 
@@ -1049,13 +1052,19 @@
             } else {
                 // 读取文本文件内容
                 const content = await file.text();
+                // 保存为 SiYuan 资源
+                const assetPath = await saveAsset(
+                    new Blob([content], { type: file.type }),
+                    file.name
+                );
 
                 currentAttachments = [
                     ...currentAttachments,
                     {
                         type: 'file',
                         name: file.name,
-                        data: content,
+                        data: content, // 内存中保持 content 方便立即发送给 AI
+                        path: assetPath,
                         mimeType: file.type,
                     },
                 ];
@@ -5290,18 +5299,8 @@
                                 type: blob.type,
                             });
 
-                            // 将图片转换为 base64 并添加为附件
-                            const base64 = await fileToBase64(file);
-
-                            currentAttachments = [
-                                ...currentAttachments,
-                                {
-                                    type: 'image',
-                                    name: imageName || fileName,
-                                    data: base64,
-                                    mimeType: blob.type || 'image/png',
-                                },
-                            ];
+                            // 使用统一的图片附件添加逻辑（包含保存到资源目录）
+                            await addImageAttachment(file);
 
                             pushMsg(t('aiSidebar.success.imageAutoUploaded'));
                             return; // 图片已作为附件添加，不需要再添加为上下文文档
@@ -5388,6 +5387,15 @@
         }
         event.preventDefault();
         isDragOver = false;
+
+        // 处理标准文件拖放
+        const files = event.dataTransfer.files;
+        if (files && files.length > 0) {
+            for (let i = 0; i < files.length; i++) {
+                await addFileAttachment(files[i]);
+            }
+            return;
+        }
 
         const type = event.dataTransfer.types[0];
         if (!type) return;
@@ -5487,9 +5495,73 @@
             // 如果 messages 存在且不为空，说明是旧版全量存储，需要迁移
             if (session.messages && session.messages.length > 0) {
                 try {
+                    // 先处理消息中的资源（提取 base64 到 SiYuan 存储）
+                    const processedMessages = await Promise.all(
+                        session.messages.map(async msg => {
+                            const newAttachments = msg.attachments
+                                ? await Promise.all(
+                                      msg.attachments.map(async att => {
+                                          // 如果有 data 且没有 path，尝试保存为资源
+                                          if (
+                                              att.data &&
+                                              att.data.startsWith('data:') &&
+                                              !att.path
+                                          ) {
+                                              try {
+                                                  const blob = base64ToBlob(
+                                                      att.data,
+                                                      att.mimeType || 'image/png'
+                                                  );
+                                                  const assetPath = await saveAsset(blob, att.name);
+                                                  return { ...att, data: '', path: assetPath };
+                                              } catch (e) {
+                                                  console.error('Failed to migrate attachment:', e);
+                                                  return att;
+                                              }
+                                          }
+                                          return att;
+                                      })
+                                  )
+                                : undefined;
+
+                            const newGeneratedImages = msg.generatedImages
+                                ? await Promise.all(
+                                      msg.generatedImages.map(async img => {
+                                          if (img.data && img.data.length > 50 && !img.path) {
+                                              try {
+                                                  const blob = base64ToBlob(
+                                                      img.data,
+                                                      img.mimeType || 'image/png'
+                                                  );
+                                                  const assetPath = await saveAsset(
+                                                      blob,
+                                                      'generated-image.png'
+                                                  );
+                                                  return { ...img, data: '', path: assetPath };
+                                              } catch (e) {
+                                                  console.error(
+                                                      'Failed to migrate generated image:',
+                                                      e
+                                                  );
+                                                  return img;
+                                              }
+                                          }
+                                          return img;
+                                      })
+                                  )
+                                : undefined;
+
+                            return {
+                                ...msg,
+                                attachments: newAttachments,
+                                generatedImages: newGeneratedImages,
+                            };
+                        })
+                    );
+
                     // 保存完整内容到 individual 文件
                     const path = `/data/storage/petal/siyuan-plugin-copilot/sessions/${session.id}.json`;
-                    const content = JSON.stringify({ messages: session.messages }, null, 2);
+                    const content = JSON.stringify({ messages: processedMessages }, null, 2);
                     const blob = new Blob([content], { type: 'application/json' });
                     await putFile(path, false, blob);
 
@@ -5604,8 +5676,19 @@
                 await saveSessions();
 
                 // 保存完整内容
+                const messagesToSave = messages.map(msg => ({
+                    ...msg,
+                    attachments: msg.attachments?.map(att => ({
+                        ...att,
+                        data: att.path ? '' : att.data,
+                    })),
+                    generatedImages: msg.generatedImages?.map(img => ({
+                        ...img,
+                        data: '',
+                    })),
+                }));
                 const sessionPath = `/data/storage/petal/siyuan-plugin-copilot/sessions/${currentSessionId}.json`;
-                const sessionContent = JSON.stringify({ messages }, null, 2);
+                const sessionContent = JSON.stringify({ messages: messagesToSave }, null, 2);
                 const sessionBlob = new Blob([sessionContent], { type: 'application/json' });
                 await putFile(sessionPath, false, sessionBlob);
             }
@@ -5627,8 +5710,19 @@
             await saveSessions();
 
             // 保存完整内容
+            const messagesToSave = messages.map(msg => ({
+                ...msg,
+                attachments: msg.attachments?.map(att => ({
+                    ...att,
+                    data: att.path ? '' : att.data,
+                })),
+                generatedImages: msg.generatedImages?.map(img => ({
+                    ...img,
+                    data: '',
+                })),
+            }));
             const sessionPath = `/data/storage/petal/siyuan-plugin-copilot/sessions/${newSession.id}.json`;
-            const sessionContent = JSON.stringify({ messages }, null, 2);
+            const sessionContent = JSON.stringify({ messages: messagesToSave }, null, 2);
             const sessionBlob = new Blob([sessionContent], { type: 'application/json' });
             await putFile(sessionPath, false, sessionBlob);
         }
@@ -5701,12 +5795,17 @@
                 const sessionData = JSON.parse(text);
                 const loadedMessages = sessionData?.messages || [];
 
-                // 还原图片数据 (从 path 还原为 blob url)
+                // 还原图片数据 (从 path 还原为 blob url) 和文本附件数据
                 for (const msg of loadedMessages) {
                     if (msg.attachments) {
                         for (const att of msg.attachments) {
-                            if (att.type === 'image' && att.path) {
-                                att.data = (await loadAsset(att.path)) || '';
+                            if (att.path) {
+                                if (att.type === 'image') {
+                                    att.data = (await loadAsset(att.path)) || '';
+                                } else {
+                                    // 还原文本附件内容
+                                    att.data = (await readAssetAsText(att.path)) || '';
+                                }
                             }
                         }
                     }
@@ -8227,13 +8326,6 @@
             >
                 <div class="ai-message__header">
                     <span class="ai-message__role">🤖 AI</span>
-                    <span class="ai-message__streaming-indicator">
-                        <span class="jumping-dots">
-                            <span class="dot"></span>
-                            <span class="dot"></span>
-                            <span class="dot"></span>
-                        </span>
-                    </span>
                 </div>
 
                 <!-- 显示流式思考过程 -->
@@ -9956,11 +10048,6 @@
         flex-shrink: 0;
     }
 
-    .ai-message__streaming-indicator {
-        color: var(--b3-theme-primary);
-        display: inline-flex;
-        align-items: center;
-    }
 
     // 三个点跳动动画
     .jumping-dots {

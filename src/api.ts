@@ -507,15 +507,15 @@ export async function getFile(path: string): Promise<any> {
  */
 export const getFileBlob = async (path: string): Promise<Blob | null> => {
     const endpoint = '/api/file/getFile'
-    let response = await fetch(endpoint, {
-        method: 'POST',
-        body: JSON.stringify({
-            path: path
-        })
-    });
-    if (!response.ok) {
-        return null;
-    }
+        let response = await fetch(endpoint, {
+            method: 'POST',
+            body: JSON.stringify({
+                path: path
+            })
+        });
+        if (!response.ok) {
+            return null;
+        }
     let data = await response.blob();
     return data;
 }

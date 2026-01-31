@@ -4,6 +4,9 @@
 - 🎨 重新生成改进：重新生成始终采用用户选择的多模型或单模型方案，感谢[@lisontowind](https://github.com/lisontowind)
 - 🎨 公式转义允许 $ 后面紧跟数字，如果输入价格之类的需要手动转义，感谢[@lisontowind](https://github.com/lisontowind)
 - 🎨 修复代码块和公式混合复制，感谢[@lisontowind](https://github.com/lisontowind)
+- 🎨 改进模型预设选择交互：直接弹出预设列表进行选择和修改
+- 🎨 调用AI生成标题使用模型设置的temperature
+- 🎨 AI还没生成内容有等待效果
 
 
 

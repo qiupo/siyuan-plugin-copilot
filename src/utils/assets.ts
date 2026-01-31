@@ -20,11 +20,29 @@ export async function calculateHash(data: ArrayBuffer): Promise<string> {
 export async function saveAsset(data: Blob | ArrayBuffer, fileName: string): Promise<string> {
     const arrayBuffer = data instanceof Blob ? await data.arrayBuffer() : data;
     const hash = await calculateHash(arrayBuffer);
-    const ext = fileName.split('.').pop() || 'png';
+
+    // 改进后缀提取逻辑
+    let ext = '';
+    if (fileName && fileName.includes('.')) {
+        ext = fileName.split('.').pop()?.toLowerCase() || '';
+    }
+
+    // 如果文件名没后缀，尝试从 blob mime type 获取
+    if (!ext && data instanceof Blob && data.type) {
+        ext = data.type.split('/').pop() || '';
+        // 映射常见 MIME
+        if (ext === 'jpeg') ext = 'jpg';
+        if (ext === 'plain') ext = 'txt';
+        if (ext === 'markdown') ext = 'md';
+    }
+
+    // 如果还是没后缀，默认 png
+    if (!ext || ext === 'image') ext = 'png';
+
     const filePath = `${ASSET_PATH}/${hash}.${ext}`;
 
     try {
-        // 尝试检查文件是否已存在
+        // 尝试检查文件是否已存在 (现在的 getFileBlob 更可靠，JSON 报错会返回 null)
         const existing = await getFileBlob(filePath);
         if (existing && existing.size > 0) {
             return filePath;
@@ -34,7 +52,11 @@ export async function saveAsset(data: Blob | ArrayBuffer, fileName: string): Pro
     }
 
     const blob = data instanceof Blob ? data : new Blob([arrayBuffer]);
-    await putFile(filePath, false, blob);
+    const result = await putFile(filePath, false, blob);
+    if (result === null) {
+        console.error('putFile failed for asset:', filePath);
+        throw new Error('Failed to save asset to SiYuan');
+    }
     return filePath;
 }
 
@@ -50,6 +72,21 @@ export async function loadAsset(path: string): Promise<string | null> {
         return URL.createObjectURL(blob);
     } catch (e) {
         console.error('Failed to load asset:', path, e);
+        return null;
+    }
+}
+
+/**
+ * 从 SiYuan 路径加载资源并转换为文本
+ * @param path SiYuan 中的资源路径
+ */
+export async function readAssetAsText(path: string): Promise<string | null> {
+    try {
+        const blob = await getFileBlob(path);
+        if (!blob) return null;
+        return await blob.text();
+    } catch (e) {
+        console.error('Failed to read asset as text:', path, e);
         return null;
     }
 }
