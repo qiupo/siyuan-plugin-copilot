@@ -33,7 +33,11 @@
     let showCustomBodyForModel: { [modelId: string]: boolean } = {}; // 控制每个模型的自定义参数折叠/展开
 
     // 验证 JSON 字符串（支持嵌套 JSON）
-    function validateJsonString(str: string): { valid: boolean; error?: string; formatted?: string } {
+    function validateJsonString(str: string): {
+        valid: boolean;
+        error?: string;
+        formatted?: string;
+    } {
         if (!str || !str.trim()) {
             return { valid: true };
         }
@@ -327,20 +331,27 @@
             </div>
         {:else}
             <div class="provider-header-content">
-                <h4>{providerName}</h4>
-                {#if websiteUrl}
-                    <a
-                        href={websiteUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="platform-link"
-                        title="访问平台官网"
-                    >
-                        <svg class="b3-button__icon">
-                            <use xlink:href="#iconLink"></use>
-                        </svg>
-                        <span>访问平台</span>
-                    </a>
+                <div class="provider-title-row">
+                    <h4>{providerName}</h4>
+                    {#if websiteUrl}
+                        <a
+                            href={websiteUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="platform-link"
+                            title="访问平台官网"
+                        >
+                            <svg class="b3-button__icon">
+                                <use xlink:href="#iconLink"></use>
+                            </svg>
+                            <span>访问平台</span>
+                        </a>
+                    {/if}
+                </div>
+                {#if providerId === 'v3'}
+                    <div class="provider-description">
+                        {t('platform.builtIn.v3Description')}
+                    </div>
                 {/if}
             </div>
             {#if isCustomProvider}
@@ -436,9 +447,7 @@
                 on:click={() => (showAdvancedConfig = !showAdvancedConfig)}
             >
                 <svg class="b3-button__icon" style="transition: transform 0.2s">
-                    <use
-                        xlink:href="{showAdvancedConfig ? '#iconDown' : '#iconRight'}"
-                    ></use>
+                    <use xlink:href={showAdvancedConfig ? '#iconDown' : '#iconRight'}></use>
                 </svg>
                 <span>{t('platform.advanced')}</span>
             </button>
@@ -585,10 +594,16 @@
                         <div class="model-config-item">
                             <button
                                 class="custom-body-toggle"
-                                on:click={() => showCustomBodyForModel[model.id] = !showCustomBodyForModel[model.id]}
+                                on:click={() =>
+                                    (showCustomBodyForModel[model.id] =
+                                        !showCustomBodyForModel[model.id])}
                             >
                                 <svg class="b3-button__icon">
-                                    <use xlink:href={showCustomBodyForModel[model.id] ? '#iconDown' : '#iconRight'}></use>
+                                    <use
+                                        xlink:href={showCustomBodyForModel[model.id]
+                                            ? '#iconDown'
+                                            : '#iconRight'}
+                                    ></use>
                                 </svg>
                                 <span>{t('models.customBody')}</span>
                             </button>
@@ -600,9 +615,16 @@
                                             <button
                                                 class="format-json-btn"
                                                 title="格式化 JSON"
-                                                on:click={() => formatCustomBodyJson(model.id, model.customBody || '')}
+                                                on:click={() =>
+                                                    formatCustomBodyJson(
+                                                        model.id,
+                                                        model.customBody || ''
+                                                    )}
                                             >
-                                                <svg class="b3-button__icon" style="width: 12px; height: 12px; color: var(--b3-theme-on-surface);">
+                                                <svg
+                                                    class="b3-button__icon"
+                                                    style="width: 12px; height: 12px; color: var(--b3-theme-on-surface);"
+                                                >
                                                     <use xlink:href="#iconFormat"></use>
                                                 </svg>
                                             </button>
@@ -611,15 +633,19 @@
                                     <textarea
                                         class="b3-text-field custom-body-textarea"
                                         class:json-error={customBodyErrors[model.id]}
-                                        class:json-valid={model.customBody && !customBodyErrors[model.id] && validateJsonString(model.customBody).valid}
+                                        class:json-valid={model.customBody &&
+                                            !customBodyErrors[model.id] &&
+                                            validateJsonString(model.customBody).valid}
                                         style="width: 100%; height: 80px; resize: vertical; font-family: monospace; font-size: 12px;"
                                         value={model.customBody || ''}
                                         placeholder={'支持嵌套 JSON，例如：\n{\n  "key": "value",\n  "nested": { "a": 1 }\n}'}
-                                        on:input={(e) =>
+                                        on:input={e =>
                                             handleCustomBodyChange(model.id, e.currentTarget.value)}
                                     />
                                     {#if customBodyErrors[model.id]}
-                                        <div class="json-error-hint">{customBodyErrors[model.id]}</div>
+                                        <div class="json-error-hint">
+                                            {customBodyErrors[model.id]}
+                                        </div>
                                     {/if}
                                 </div>
                             {/if}
@@ -668,7 +694,8 @@
                                         checked={model.capabilities?.imageGeneration || false}
                                         on:change={e => {
                                             if (!model.capabilities) model.capabilities = {};
-                                            model.capabilities.imageGeneration = e.currentTarget.checked;
+                                            model.capabilities.imageGeneration =
+                                                e.currentTarget.checked;
                                             updateModel(
                                                 model.id,
                                                 'capabilities',
@@ -676,7 +703,9 @@
                                             );
                                         }}
                                     />
-                                    <span class="capability-label">{t('models.imageGeneration')}</span>
+                                    <span class="capability-label">
+                                        {t('models.imageGeneration')}
+                                    </span>
                                 </label>
                             </div>
                         </div>
@@ -762,9 +791,28 @@
 
     .provider-header-content {
         display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        flex: 1;
+    }
+
+    .provider-title-row {
+        display: flex;
         align-items: center;
         gap: 12px;
-        flex: 1;
+    }
+
+    .provider-description {
+        font-size: 12px;
+        color: var(--b3-theme-on-surface);
+        line-height: 1.5;
+        background: var(--b3-theme-primary-lightest);
+        padding: 6px 12px;
+        border-radius: 4px;
+        border-left: 3px solid var(--b3-theme-primary);
+        opacity: 0.9;
+        margin-top: 2px;
     }
 
     .platform-link {
@@ -1222,7 +1270,7 @@
         cursor: pointer;
         opacity: 0.6;
         transition: opacity 0.2s;
-        
+
         &:hover {
             opacity: 1;
             background: var(--b3-theme-surface);
@@ -1232,12 +1280,12 @@
     .custom-body-textarea {
         white-space: pre;
         tab-size: 2;
-        
+
         &.json-error {
             border-color: var(--b3-theme-error) !important;
             background-color: color-mix(in srgb, var(--b3-theme-error) 5%, transparent);
         }
-        
+
         &.json-valid {
             border-color: var(--b3-theme-success, #52c41a) !important;
         }
