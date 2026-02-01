@@ -383,7 +383,11 @@
         tempModelThinkingSettings = { ...(preset.modelThinkingSettings || {}) };
 
         isPresetListOpen = false;
-        await openSettingsPanel();
+        isSettingsOpen = true;
+        updateSettingsPosition();
+        setTimeout(() => {
+            document.addEventListener('click', closeSettingsOnOutsideClick);
+        }, 0);
     }
 
     async function configurePreset(presetId: string) {
@@ -667,6 +671,7 @@
         isSettingsOpen &&
         (!editingPresetId || editingPresetId === selectedPresetId) &&
         (tempContextCount !== appliedSettings.contextCount ||
+            tempMaxContextTokens !== (appliedSettings.maxContextTokens ?? 16384) ||
             tempTemperature !== appliedSettings.temperature ||
             tempTemperatureEnabled !== appliedSettings.temperatureEnabled ||
             tempSystemPrompt !== appliedSettings.systemPrompt ||
@@ -691,6 +696,7 @@
         
         return (
             preset.contextCount !== tempContextCount ||
+            (preset.maxContextTokens ?? 16384) !== tempMaxContextTokens ||
             preset.temperature !== tempTemperature ||
             (preset.temperatureEnabled ?? true) !== tempTemperatureEnabled ||
             preset.systemPrompt !== tempSystemPrompt ||
@@ -719,35 +725,44 @@
         const savedPresetId = await loadSelectedPresetId();
         if (savedPresetId) {
             const preset = presets.find(p => p.id === savedPresetId);
-            if (
-                preset &&
-                preset.contextCount === appliedSettings.contextCount &&
-                preset.temperature === appliedSettings.temperature &&
-                (preset.temperatureEnabled ?? true) ===
-                    (appliedSettings.temperatureEnabled ?? true) &&
-                preset.systemPrompt === appliedSettings.systemPrompt &&
-                (preset.modelSelectionEnabled ?? false) ===
-                    (appliedSettings.modelSelectionEnabled ?? false) &&
-                areModelsEqual(preset.selectedModels || [], appliedSettings.selectedModels || []) &&
-                (preset.enableMultiModel ?? false) ===
-                    (appliedSettings.enableMultiModel ?? false) &&
-                (preset.chatMode || 'ask') === (appliedSettings.chatMode ?? 'ask') &&
-                areThinkingSettingsEqual(
-                    preset.modelThinkingSettings || {},
-                    appliedSettings.modelThinkingSettings || {}
-                )
-            ) {
-                selectedPresetId = savedPresetId;
+            if (preset) {
+                // 原本的逻辑会检查参数是否一致，如果不一致则置空选中状态
+                // 现在保留这个检查逻辑结构，但修改行为：即使参数不一致，也保持选中状态，避免预设自动跳变
+                const isMatch =
+                    preset.contextCount === appliedSettings.contextCount &&
+                    (preset.maxContextTokens ?? 16384) === (appliedSettings.maxContextTokens ?? 16384) &&
+                    preset.temperature === appliedSettings.temperature &&
+                    (preset.temperatureEnabled ?? true) ===
+                        (appliedSettings.temperatureEnabled ?? true) &&
+                    preset.systemPrompt === appliedSettings.systemPrompt &&
+                    (preset.modelSelectionEnabled ?? false) ===
+                        (appliedSettings.modelSelectionEnabled ?? false) &&
+                    areModelsEqual(preset.selectedModels || [], appliedSettings.selectedModels || []) &&
+                    (preset.enableMultiModel ?? false) ===
+                        (appliedSettings.enableMultiModel ?? false) &&
+                    (preset.chatMode || 'ask') === (appliedSettings.chatMode ?? 'ask') &&
+                    areThinkingSettingsEqual(
+                        preset.modelThinkingSettings || {},
+                        appliedSettings.modelThinkingSettings || {}
+                    );
+
+                if (isMatch) {
+                    selectedPresetId = savedPresetId;
+                } else {
+                    // 即使不匹配，也保持选中状态（用户需求：预设只能在点击列表时变化）
+                    selectedPresetId = savedPresetId;
+                }
             } else {
                 selectedPresetId = '';
+                // 如果预设不存在了，清除保存的选中状态
+                await saveSelectedPresetId('');
             }
         } else {
             selectedPresetId = '';
         }
     }
 
-    // 重置为默认值
-    async function resetToDefaults() {
+    function initTempVarsToDefaults() {
         const modelConfig = getCurrentModelConfig();
         tempContextCount = 10;
         tempTemperature = modelConfig?.temperature ?? 0.7;
@@ -759,8 +774,13 @@
         tempChatMode = 'ask';
         tempModelThinkingSettings = {};
         editingPresetId = '';
-        selectedPresetId = '';
         newPresetName = '新预设';
+    }
+
+    // 重置为默认值
+    async function resetToDefaults() {
+        initTempVarsToDefaults();
+        selectedPresetId = '';
         await saveSelectedPresetId('');
     }
     // 关闭设置下拉菜单
@@ -789,7 +809,7 @@
     }
 
     async function openNewPresetPanel() {
-        await resetToDefaults();
+        initTempVarsToDefaults();
         isPresetListOpen = false;
         isSettingsOpen = true;
         editingPresetId = '';
@@ -1249,6 +1269,7 @@
                         max="200000"
                         step="1024"
                         bind:value={tempMaxContextTokens}
+                        on:change={applySettings}
                         class="b3-slider"
                     />
                     <div class="model-settings-hint">

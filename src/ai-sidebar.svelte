@@ -6690,9 +6690,21 @@
 
     // 获取工具的显示名称
     function getToolDisplayName(toolName: string): string {
+        if (!toolName) return '';
         const key = `tools.${toolName}.name`;
         const name = t(key);
-        return name === key ? toolName : name;
+        if (!name || name === key) {
+            if (toolName.startsWith('mcp__')) {
+                const parts = toolName.split('__');
+                if (parts.length >= 3) {
+                    return `${parts[1]} (${parts[parts.length - 1]})`;
+                } else if (parts.length === 2) {
+                    return parts[1];
+                }
+            }
+            return toolName;
+        }
+        return name;
     }
 
     // 批准工具调用

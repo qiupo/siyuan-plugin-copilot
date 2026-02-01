@@ -209,9 +209,21 @@
 
     // 获取工具的友好名称
     function getToolDisplayName(toolName: string): string {
+        if (!toolName) return '';
         const key = `tools.${toolName}.name`;
         const name = t(key);
-        return name === key ? toolName : name;
+        if (!name || name === key) {
+            if (toolName.startsWith('mcp__')) {
+                const parts = toolName.split('__');
+                if (parts.length >= 3) {
+                    return `${parts[1]} (${parts[parts.length - 1]})`;
+                } else if (parts.length === 2) {
+                    return parts[1];
+                }
+            }
+            return toolName;
+        }
+        return name;
     }
 
     // 获取工具的简短描述
@@ -230,6 +242,10 @@
             expandedTools.add(toolName);
         }
         expandedTools = expandedTools;
+    }
+
+    function getServerName(tool: Tool): string | undefined {
+        return (tool as any)._mcpServerName;
     }
 </script>
 
@@ -282,6 +298,9 @@
                                         <span class="tool-item__name">
                                             {getToolDisplayName(toolName)}
                                         </span>
+                                        {#if getServerName(tool)}
+                                            <span class="tool-item__badge">{getServerName(tool)}</span>
+                                        {/if}
                                     </label>
                                     <div class="tool-item__header-right">
                                         <label
@@ -531,6 +550,18 @@
         &__name {
             font-weight: 500;
             font-size: 14px;
+        }
+
+        &__badge {
+            display: inline-block;
+            padding: 1px 6px;
+            margin-left: 8px;
+            font-size: 11px;
+            border-radius: 4px;
+            background: var(--b3-theme-surface);
+            border: 1px solid var(--b3-theme-surface-lighter);
+            color: var(--b3-theme-on-surface-light);
+            line-height: 1.4;
         }
 
         &__auto-approve {
