@@ -1467,17 +1467,97 @@ export async function siyuan_create_document(
     markdown: string
 ): Promise<string> {
     try {
-        // 首先创建文档
-        const docId = await createDocWithMd(notebook, path, markdown);
-
-        // 自动打开创建的文档
-        try {
-            await openBlock(docId);
-        } catch (openError) {
-            console.warn('打开文档失败，但文档已创建:', openError);
+        let targetNotebook = notebook;
+        
+        // 如果没有提供笔记本ID，尝试获取第一个可用的笔记本
+        if (!targetNotebook) {
+            try {
+                const notebooksRes = await lsNotebooks();
+                if (notebooksRes && notebooksRes.notebooks && notebooksRes.notebooks.length > 0) {
+                    targetNotebook = notebooksRes.notebooks[0].id;
+                    console.log('No notebook ID provided, using first available notebook:', notebooksRes.notebooks[0].name);
+                }
+            } catch (e) {
+                console.warn('Failed to get default notebook:', e);
+            }
         }
 
-        return docId;
+        if (!targetNotebook) {
+            throw new Error('未提供笔记本ID (notebook)，且无法自动获取默认笔记本。');
+        }
+
+        // 定义 ID 恢复函数：通过 SQL 查询尝试获取文档 ID
+        const recoverIdViaSql = async (nbId: string, docPath: string): Promise<string | null> => {
+            const maxRetries = 5;
+            const baseDelay = 500; // 基础延迟 500ms
+            
+            console.log(`Starting ID recovery for path: ${docPath} in notebook: ${nbId}`);
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    // 递增延迟：500, 1000, 1500...
+                    const delay = baseDelay * (i + 1);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    
+                    // 处理路径格式，确保以 / 开头
+                    const safePath = docPath.startsWith('/') ? docPath : '/' + docPath;
+                    // SQL 查询：根据笔记本和路径查找文档 ID
+                    const sqlQuery = `SELECT id FROM blocks WHERE box='${nbId}' AND hpath='${safePath}' AND type='d' LIMIT 1`;
+                    const results = await sql(sqlQuery);
+                    
+                    if (results && results.length > 0) {
+                        console.log(`Successfully recovered docId from SQL on attempt ${i + 1}:`, results[0].id);
+                        return results[0].id;
+                    } else {
+                        console.log(`Attempt ${i + 1}: Document not found yet via SQL.`);
+                    }
+                } catch (sqlError) {
+                    console.warn(`Error querying document ID on attempt ${i + 1}:`, sqlError);
+                }
+            }
+            return null;
+        };
+
+        // 尝试创建文档
+        let docId: string | null = null;
+        let createError: Error | null = null;
+
+        try {
+            docId = await createDocWithMd(targetNotebook, path, markdown);
+        } catch (error) {
+            console.warn('createDocWithMd threw an error, will attempt to verify if document was created anyway:', error);
+            createError = error as Error;
+        }
+
+        // 如果 API 返回 null 或者抛出了异常，尝试通过 SQL 恢复 ID
+        if (!docId) {
+            if (createError) {
+                console.warn(`Creation failed with error: ${createError.message}. Checking if document exists...`);
+            } else {
+                console.warn(`createDocWithMd returned null for path: ${path}. Trying to recover ID via SQL...`);
+            }
+
+            docId = await recoverIdViaSql(targetNotebook, path);
+        }
+
+        if (docId) {
+            // 自动打开创建的文档
+            try {
+                await openBlock(docId);
+            } catch (openError) {
+                console.warn('打开文档失败，但文档已创建:', openError);
+            }
+            return docId;
+        } else {
+            // 如果仍然无法获取 ID
+            if (createError) {
+                // 如果原始调用是报错了，且也没查到 ID，那么抛出原始错误
+                throw createError;
+            } else {
+                // 如果是返回 null 且没查到 ID
+                throw new Error(`文档创建可能已成功，但经多次尝试无法获取文档ID。请检查笔记本 "${targetNotebook}" 下的路径 "${path}"。`);
+            }
+        }
     } catch (error) {
         console.error('Create document error:', error);
         throw new Error(`创建文档失败: ${(error as Error).message}`);
