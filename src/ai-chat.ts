@@ -1329,6 +1329,7 @@ export function isImageGenerationSupported(provider: string, modelId: string): b
 
     const lowerModelId = modelId.toLowerCase();
     return supportedModels.some(m => lowerModelId.includes(m));
+}
 /**
  * 根据Token限制截断消息列表
  * @param messages 消息列表
