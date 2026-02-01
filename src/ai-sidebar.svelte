@@ -3148,7 +3148,10 @@
 
                                     // 更新 messagesToSend，准备下一次循环
                                     // 只在字段存在时才包含，避免传递 undefined 字段给 API
-                                    messagesToSend = messages.map(msg => {
+                                    const systemMessages = messagesToSend.filter(
+                                        msg => msg.role === 'system'
+                                    );
+                                    const nonSystemMessages = messages.map(msg => {
                                         const baseMsg: any = {
                                             role: msg.role,
                                             content: msg.content,
@@ -3169,6 +3172,7 @@
 
                                         return baseMsg;
                                     });
+                                    messagesToSend = [...systemMessages, ...nonSystemMessages];
                                 } finally {
                                     // 通知工具执行完成
                                     toolExecutionComplete?.();
@@ -6948,7 +6952,10 @@
                                     hasUnsavedChanges = true;
 
                                     // 更新 messagesToSend，准备下一次循环
-                                    messagesToSend = messages.map(msg => {
+                                    const systemMessages = messagesToSend.filter(
+                                        msg => msg.role === 'system'
+                                    );
+                                    const nonSystemMessages = messages.map(msg => {
                                         const baseMsg: any = {
                                             role: msg.role,
                                             content: msg.content,
@@ -6968,6 +6975,7 @@
 
                                         return baseMsg;
                                     });
+                                    messagesToSend = [...systemMessages, ...nonSystemMessages];
                                 } finally {
                                     toolExecutionComplete?.();
                                 }
