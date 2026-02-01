@@ -9,6 +9,7 @@
             "displayAndOperation": "显示与操作",
             "noteExport": "对话导出",
             "sessionManagement": "会话管理",
+            "mcpServers": "MCP 服务配置",
             "group1": "页签1",
             "group2": "页签2",
             "reset": "重置设置"
@@ -131,6 +132,7 @@
     },
     "aiSidebar": {
         "title": "Copilot",
+        "thinkingProcess": "思考过程",
         "unsaved": "未保存",
         "unsavedChanges": "有未保存的更改",
         "mode": {
@@ -153,6 +155,10 @@
             "toolCallFailed": "工具调用失败",
             "viewResult": "查看结果",
             "hideResult": "隐藏结果"
+        },
+        "info": {
+            "noValidModel": "未选择有效模型",
+            "noValidMultiModels": "多模型模式下无可用模型"
         },
         "empty": {
             "title": "开始对话",
@@ -201,6 +207,8 @@
             "title": "预设设置",
             "contextCount": "上下文消息数",
             "contextCountHint": "控制对话历史中包含的消息数量",
+            "maxContextTokens": "最大上下文 Tokens",
+            "maxContextTokensHint": "限制上下文的总 Token 数量（估算值）",
             "temperature": "Temperature",
             "temperatureHint": "控制生成文本的随机性,值越高越随机",
             "enableTemperature": "启用 Temperature 调整",
@@ -208,10 +216,14 @@
             "systemPromptPlaceholder": "输入临时系统提示词(留空使用全局设置)",
             "systemPromptHint": "仅在当前会话中生效",
             "presets": "预设",
+            "preset": "预设",
             "selectPreset": "-- 选择预设 --",
             "noPresets": "暂无预设",
             "presetName": "预设名称",
             "savePreset": "保存当前设置",
+            "saveAsPreset": "保存为新预设",
+            "switchPreset": "切换预设",
+            "save": "保存",
             "updatePreset": "更新预设",
             "deletePreset": "删除预设",
             "confirmDelete": "确定要删除此预设吗?",
@@ -329,6 +341,7 @@
             "noCurrentDoc": "未找到当前文档"
         },
         "errors": {
+            "noSelection": "未选择内容",
             "imageOnly": "只支持图片文件",
             "imageTooLarge": "图片文件过大，最大支持 10MB",
             "textAndImageOnly": "只支持文本文件和图片文件",
@@ -458,6 +471,27 @@
         "required": "必填",
         "back": "返回"
     },
+    "enabled": "已启用",
+    "disabled": "已禁用",
+    "edit": "编辑",
+    "add": "添加",
+    "name": "名称",
+    "type": "类型",
+    "enable": "启用",
+    "cancel": "取消",
+    "save": "保存",
+    "other": "其他",
+    "loading": "加载中...",
+    "mcp": {
+        "noServers": "未配置 MCP 服务器",
+        "name": "服务器名称",
+        "type": "类型",
+        "command": "命令",
+        "args": "参数",
+        "url": "SSE URL",
+        "env": "环境变量"
+    },
+    "delete": "删除",
     "toolbar": {
         "aiChat": "AI 问答",
         "aiChatDialog": "AI 助手"
@@ -503,7 +537,9 @@
             "selectAll": "全选",
             "deselectAll": "取消全选",
             "selected": "已选择",
-            "parameters": "参数"
+            "selectedCount": "已选择 {n} 个工具",
+            "parameters": "参数",
+            "autoApprove": "自动批准"
         },
         "autoApprove": {
             "label": "自动批准",

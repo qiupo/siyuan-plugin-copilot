@@ -37,6 +37,7 @@ import {
     removeAttributeViewBlocks,
 } from '../api';
 import { getActiveEditor } from 'siyuan';
+import { mcpManager } from '../libs/mcp-manager';
 
 /**
  * 获取当前激活的编辑器 Protyle 实例
@@ -1320,7 +1321,7 @@ export async function siyuan_insert_block(
                     const doOperations = [];
                     if (appendParentID) {
                         // 使用appendBlock API作为后置子块插入
-                        const appendResult = await appendBlock(dataType, data, appendParentID);
+                        await appendBlock(dataType, data, appendParentID);
                         insertResult = {
                             id: newBlockId,
                             parentID: appendParentID,
@@ -1790,6 +1791,11 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
     try {
         const args = JSON.parse(argsStr);
 
+        // Check if it's an MCP tool
+        if (name.startsWith('mcp__')) {
+            return await mcpManager.callTool(name, args);
+        }
+
         switch (name) {
             case 'siyuan_sql_query':
                 const results = await siyuan_sql_query(args.sql);
@@ -1862,4 +1868,13 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
         console.error(`Execute tool ${name} error:`, error);
         return `执行工具失败: ${(error as Error).message}`;
     }
+}
+
+/**
+ * 获取所有可用工具（包括原生工具和 MCP 工具）
+ */
+export async function getAllTools(): Promise<Tool[]> {
+    const mcpTools = await mcpManager.getTools();
+    console.log('mcpTools',mcpTools)
+    return [...AVAILABLE_TOOLS, ... mcpTools];
 }

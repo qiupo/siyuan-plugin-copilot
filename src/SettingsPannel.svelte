@@ -6,6 +6,7 @@
     import { pushMsg, pushErrMsg, lsNotebooks } from './api';
     import { confirm } from 'siyuan';
     import ProviderConfigPanel from './components/ProviderConfigPanel.svelte';
+    import MCPServerManager from './components/MCPServerManager.svelte';
     import type { CustomProviderConfig } from './defaultSettings';
     export let plugin;
 
@@ -307,6 +308,10 @@
                     description: t('settings.autoRenameSession.description') || '在首次发送消息时，自动使用AI生成会话标题',
                 },
             ],
+        },
+        {
+            name: t('settings.settingsGroup.mcpServers') || 'MCP 服务配置',
+            items: [],
         },
         {
             name: t('settings.settingsGroup.reset') || 'Reset Settings',
@@ -724,6 +729,16 @@
                         </div>
                     </div>
                 {/if}
+            </div>
+        {:else if focusGroup === (t('settings.settingsGroup.mcpServers') || 'MCP 服务配置')}
+            <div class="config__tab-container_plugin">
+                <MCPServerManager
+                    mcpServers={settings.mcpServers || []}
+                    on:change={(e) => {
+                        settings.mcpServers = e.detail;
+                        saveSettings();
+                    }}
+                />
             </div>
         {:else}
             <SettingPanel

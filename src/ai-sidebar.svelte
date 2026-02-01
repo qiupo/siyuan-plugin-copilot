@@ -10,6 +10,8 @@
         type ThinkingEffort,
         isSupportedThinkingGeminiModel,
         isSupportedThinkingClaudeModel,
+        limitMessagesByTokens,
+        calculateTotalTokens,
     } from './ai-chat';
     import type { MessageContent } from './ai-chat';
     import { getActiveEditor } from 'siyuan';
@@ -21,7 +23,6 @@
         exportMdContent,
         openBlock,
         updateBlock,
-        insertBlock,
         getBlockDOM,
         getBlockKramdown,
         getBlockByID,
@@ -44,7 +45,8 @@
     import { settingsStore } from './stores/settings';
     import { confirm, Constants } from 'siyuan';
     import { t } from './utils/i18n';
-    import { AVAILABLE_TOOLS, executeToolCall } from './tools';
+    import { AVAILABLE_TOOLS, executeToolCall, getAllTools, type Tool } from './tools';
+    import { mcpManager } from './libs/mcp-manager';
 
     export let plugin: any;
     export let initialMessage: string = ''; // 初始消息
@@ -60,12 +62,14 @@
         pinned?: boolean; // 是否钉住
     }
 
+    let allTools: Tool[] = [...AVAILABLE_TOOLS];
     let messages: Message[] = [];
     let currentInput = '';
     let isLoading = false;
     let streamingMessage = '';
     let streamingThinking = ''; // 流式思考内容
     let isThinkingPhase = false; // 是否在思考阶段
+    let isStreamingThinkingCollapsed = false; // 流式思考过程是否折叠
     let settings: any = {};
     let messagesContainer: HTMLElement;
     let textareaElement: HTMLTextAreaElement;
@@ -151,6 +155,7 @@
     // 模型临时设置
     let tempModelSettings = {
         contextCount: 10,
+        maxContextTokens: 16384,
         temperature: 0.7,
         temperatureEnabled: true,
         systemPrompt: '',
@@ -158,7 +163,165 @@
         selectedModels: [] as Array<{ provider: string; modelId: string }>,
         enableMultiModel: false,
         chatMode: 'ask' as 'ask' | 'edit' | 'agent',
+        modelThinkingSettings: {} as Record<string, boolean>,
     };
+
+    const editModePrompt = `你是一个专业的笔记编辑助手。当用户要求修改内容时，你必须返回JSON格式的编辑指令。
+
+**关于上下文格式**：
+用户提供的上下文将以以下格式呈现：
+
+## 文档: 文档标题
+或
+## 块: 块内容预览
+
+**BlockID**: \`20240101120000-abc123\`
+
+\`\`\`markdown
+这里是kramdown格式的内容，包含块ID信息：
+段落内容
+{: id="20240101120100-def456"}
+
+* 列表项
+  {: id="20240101120200-ghi789"}
+\`\`\`
+
+**关于BlockID和kramdown格式**：
+- **顶层BlockID**：位于 \`\`\`markdown 代码块之前，格式为 **BlockID**: \`xxxxxxxxxx-xxxxxxx\`
+- **子块ID标记**：在markdown代码块内，格式为 {: id="20240101120100-def456"}
+- 段落块会有 {: id="..."} 标记
+- 列表项会有 {: id="..."} 标记  
+- 标题、代码块等各种块都有ID标记
+
+你可以编辑任何包含ID标记的块，包括：
+- 顶层文档/块（使用代码块外的BlockID）
+- 文档内的任何子块（使用代码块内的 {: id="xxx"}）
+
+**提取BlockID的方法**：
+- 从 **BlockID**: \`xxxxx\` 获取顶层块ID
+- 从 {: id="xxxxx"} 获取子块ID
+- BlockID格式通常为：时间戳-字符串，如 20240101120000-abc123
+
+编辑指令格式（必须严格遵循）：
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",  // 操作类型："update"=更新块（默认），"insert"=插入新块
+      "blockId": "要编辑的块ID（可以是顶层块或子块的ID）",
+      "newContent": "修改后的内容（kramdown格式，保留必要的ID标记）"
+    },
+    {
+      "operationType": "insert",  // 插入新块
+      "blockId": "参考块的ID（在此块前后插入）",
+      "position": "after",  // "before"=在参考块之前插入，"after"=在参考块之后插入（默认）
+      "newContent": "新插入的内容（kramdown格式）"
+    }
+  ]
+}
+\`\`\`
+
+重要规则：
+1. **必须返回JSON格式**：使用上述JSON结构，包裹在 \`\`\`json 代码块中
+2. **blockId 必须来自上下文**：从 [BlockID: xxx] 或 {: id="xxx"} 中提取
+3. **可以编辑任何有ID的块**：不限于顶层块，子块也可以精确编辑
+4. **可以插入新块**：使用 operationType: "insert" 在指定块前后插入新内容
+5. **newContent格式**：应该是kramdown格式，如果编辑子块，内容要包含该块的ID标记；插入新块时不需要ID标记
+6. **可以批量编辑**：在 editOperations 数组中包含多个编辑操作
+7. 思源笔记kramdown格式如果要添加颜色：应该是<span data-type="text">添加颜色的文字1</span>{: style="color: var(--b3-font-color1);"}，优先使用以下颜色变量：
+  - --b3-font-color1: 红色
+  - --b3-font-color2: 橙色
+  - --b3-font-color3: 蓝色
+  - --b3-font-color4: 绿色
+  - --b3-font-color5: 灰色
+8. **添加说明**：在JSON代码块之外，添加文字说明你的修改
+
+示例1 - 编辑顶层块：
+好的，我会帮你改进这段内容：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",
+      "blockId": "20240101120000-abc123",
+      "newContent": "这是修改后的整个文档内容\\n{: id=\\"20240101120000-abc123\\"}"
+    }
+  ]
+}
+\`\`\`
+
+示例2 - 编辑子块（推荐）：
+我会针对性地修改第二段和第三个列表项：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",
+      "blockId": "20240101120100-def456",
+      "newContent": "这是修改后的第二段内容，表达更专业。\\n{: id=\\"20240101120100-def456\\"}"
+    },
+    {
+      "operationType": "update",
+      "blockId": "20240101120200-ghi789",
+      "newContent": "* 这是修改后的列表项\\n  {: id=\\"20240101120200-ghi789\\"}"
+    }
+  ]
+}
+\`\`\`
+
+我针对需要改进的具体段落和列表项进行了精确修改。
+
+示例3 - 插入新块：
+我会在第二段后面插入一段补充说明：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "insert",
+      "blockId": "20240101120100-def456",
+      "position": "after",
+      "newContent": "这是新插入的补充段落，提供更多细节信息。"
+    }
+  ]
+}
+\`\`\`
+
+我在指定的段落后面添加了补充内容。
+
+示例4 - 混合操作：
+我会修改第一段并在其后插入新内容：
+
+\`\`\`json
+{
+  "editOperations": [
+    {
+      "operationType": "update",
+      "blockId": "20240101120100-def456",
+      "newContent": "这是修改后的段落内容。\\n{: id=\\"20240101120100-def456\\"}"
+    },
+    {
+      "operationType": "insert",
+      "blockId": "20240101120100-def456",
+      "position": "after",
+      "newContent": "这是紧跟在修改段落后的新增内容。"
+    }
+  ]
+}
+\`\`\`
+
+我修改了原段落并在其后添加了补充信息。
+
+注意：
+- 优先编辑子块而不是整个文档，这样更精确且不会影响其他内容
+- 只有在用户明确要求修改内容时才返回JSON编辑指令
+- 如果只是回答问题，则正常回复即可，不要返回JSON
+- 确保JSON格式正确，可以被解析
+- 确保blockId来自上下文中的ID标记（**BlockID**: \`xxx\` 或 {: id="xxx"}）
+- newContent应保留kramdown的ID标记
+- **重要**：newContent中只包含修改后的正文内容，不要包含"## 文档"、"## 块"或"**BlockID**:"这样的上下文标识，这些只是用于你理解上下文的`;
 
     // 编辑模式
     type ChatMode = 'ask' | 'edit' | 'agent';
@@ -682,6 +845,19 @@
 
     // Agent 模式
     let isToolSelectorOpen = false;
+
+    async function toggleToolSelector() {
+        if (!isToolSelectorOpen) {
+            try {
+                // 打开前刷新工具列表，确保获取最新的 MCP 工具
+                allTools = await getAllTools();
+            } catch (error) {
+                console.error('Failed to refresh tools:', error);
+            }
+        }
+        isToolSelectorOpen = !isToolSelectorOpen;
+    }
+
     let selectedTools: ToolConfig[] = []; // 选中的工具配置列表
     let toolCallsInProgress: Set<string> = new Set(); // 正在执行的工具调用ID
     let toolCallsExpanded: Record<string, boolean> = {}; // 工具调用是否展开，默认折叠
@@ -728,6 +904,7 @@
 
     // 订阅设置变化
     let unsubscribe: () => void;
+    let mcpUnsubscribe: () => void;
 
     onMount(async () => {
         settings = await plugin.loadSettings();
@@ -773,6 +950,25 @@
         // 加载 Agent 模式的工具配置
         await loadToolsConfig();
 
+        // 初始化 MCP Manager
+        console.log(`init mcpManager with configs: ${JSON.stringify(settings.mcpServers || [])}`);
+        try {
+            await mcpManager.init(settings.mcpServers || []);
+            allTools = await getAllTools();
+        } catch (error) {
+            console.error('Failed to load tools:', error);
+        }
+
+        // 订阅 MCP 工具更新
+        mcpUnsubscribe = mcpManager.onToolsUpdate(async () => {
+            try {
+                allTools = await getAllTools();
+                console.log('Tools updated from MCP event');
+            } catch (error) {
+                console.error('Failed to update tools from event:', error);
+            }
+        });
+
         // 如果有系统提示词，添加到消息列表
         if (settings.aiSystemPrompt) {
             messages = [{ role: 'system', content: settings.aiSystemPrompt }];
@@ -789,10 +985,26 @@
         }
 
         // 订阅设置变化
-        unsubscribe = settingsStore.subscribe(newSettings => {
+        unsubscribe = settingsStore.subscribe(async newSettings => {
             if (newSettings && Object.keys(newSettings).length > 0) {
+                // 检查 MCP 配置是否变化
+                const oldMcpServers = settings.mcpServers;
+                
                 // 更新本地设置
                 settings = newSettings;
+
+                // 初始化或更新 MCP Manager
+                if (
+                    JSON.stringify(oldMcpServers) !== JSON.stringify(newSettings.mcpServers) ||
+                    (!oldMcpServers && newSettings.mcpServers)
+                ) {
+                    try {
+                        await mcpManager.init(newSettings.mcpServers || []);
+                        allTools = await getAllTools();
+                    } catch (error) {
+                        console.error('Failed to update tools:', error);
+                    }
+                }
 
                 // 更新提供商信息
                 if (newSettings.aiProviders) {
@@ -851,6 +1063,9 @@
         // 取消订阅
         if (unsubscribe) {
             unsubscribe();
+        }
+        if (mcpUnsubscribe) {
+            mcpUnsubscribe();
         }
 
         // 移除全局点击事件监听器
@@ -1232,6 +1447,7 @@
     async function handleApplyModelSettings(
         event: CustomEvent<{
             contextCount: number;
+            maxContextTokens: number;
             temperature: number;
             temperatureEnabled: boolean;
             systemPrompt: string;
@@ -1247,6 +1463,7 @@
         // 更新tempModelSettings，保持所有字段的状态
         tempModelSettings = {
             contextCount: newSettings.contextCount,
+            maxContextTokens: newSettings.maxContextTokens || 16384,
             temperature: newSettings.temperature,
             temperatureEnabled: newSettings.temperatureEnabled,
             systemPrompt: newSettings.systemPrompt,
@@ -1911,6 +2128,9 @@
         userContent: string,
         lastUserMessage: Message
     ) {
+        const isDeepseekThinkingAgent =
+            chatMode === 'agent' &&
+            currentProvider === 'deepseek';
         // 过滤掉空的 assistant 消息，防止某些 Provider（例如 Kimi）报错
         // 但保留有生图的 assistant 消息
         let messagesToSend = messages
@@ -1940,6 +2160,17 @@
                     role: msg.role,
                     content: msg.content,
                 };
+
+                if (msg.tool_calls) {
+                    baseMsg.tool_calls = msg.tool_calls;
+                }
+                if (msg.tool_call_id) {
+                    baseMsg.tool_call_id = msg.tool_call_id;
+                    baseMsg.name = msg.name;
+                }
+                if (isDeepseekThinkingAgent && msg.reasoning_content) {
+                    baseMsg.reasoning_content = msg.reasoning_content;
+                }
 
                 const isLastMessage = index === array.length - 1;
                 if (
@@ -2174,7 +2405,12 @@
         }
 
         // 添加系统提示词
-        if (settings.aiSystemPrompt) {
+        if (chatMode === 'edit') {
+            if (settings.aiSystemPrompt) {
+                messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
+            }
+            messagesToSend.unshift({ role: 'system', content: editModePrompt });
+        } else if (settings.aiSystemPrompt) {
             messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
         }
 
@@ -2189,9 +2425,19 @@
             }
         }
 
-        // 限制上下文消息数量
+        // 限制上下文消息数量（优先使用 Token 限制，同时兼顾消息数量限制）
         const systemMessages = messagesToSend.filter(msg => msg.role === 'system');
-        const otherMessages = messagesToSend.filter(msg => msg.role !== 'system');
+        
+        // 1. 先基于 Token 数量限制（这是更准确的限制方式）
+        // 注意：limitMessagesByTokens 会返回包含 system 消息的列表
+        const tokenLimitedMessages = limitMessagesByTokens(messagesToSend, tempModelSettings.maxContextTokens || 16384);
+        
+        // 提取非 system 消息
+        const otherMessages = tokenLimitedMessages.filter(msg => msg.role !== 'system');
+        
+        // 2. 再基于消息数量限制（如果用户设置了较小的 count，仍然生效）
+        // 注意：由于 maxContextTokens 默认值可能较大，如果不限制 count，可能会包含过多消息
+        // 但如果用户想要利用大窗口（如200k），他们会调大 contextCount
         const limitedMessages = otherMessages.slice(-tempModelSettings.contextCount);
 
         // 建立 tool_call_id => tool 消息的索引，便于补全被截断的链条
@@ -2505,6 +2751,7 @@
         streamingMessage = '';
         streamingThinking = '';
         isThinkingPhase = false;
+        isStreamingThinkingCollapsed = false;
         hasUnsavedChanges = true;
         autoScroll = true; // 发送新消息时启用自动滚动
 
@@ -2843,164 +3090,6 @@
 
         // 根据模式添加系统提示词
         if (chatMode === 'edit') {
-            // 编辑模式的特殊系统提示词
-            const editModePrompt = `你是一个专业的笔记编辑助手。当用户要求修改内容时，你必须返回JSON格式的编辑指令。
-
-**关于上下文格式**：
-用户提供的上下文将以以下格式呈现：
-
-## 文档: 文档标题
-或
-## 块: 块内容预览
-
-**BlockID**: \`20240101120000-abc123\`
-
-\`\`\`markdown
-这里是kramdown格式的内容，包含块ID信息：
-段落内容
-{: id="20240101120100-def456"}
-
-* 列表项
-  {: id="20240101120200-ghi789"}
-\`\`\`
-
-**关于BlockID和kramdown格式**：
-- **顶层BlockID**：位于 \`\`\`markdown 代码块之前，格式为 **BlockID**: \`xxxxxxxxxx-xxxxxxx\`
-- **子块ID标记**：在markdown代码块内，格式为 {: id="20240101120100-def456"}
-- 段落块会有 {: id="..."} 标记
-- 列表项会有 {: id="..."} 标记  
-- 标题、代码块等各种块都有ID标记
-
-你可以编辑任何包含ID标记的块，包括：
-- 顶层文档/块（使用代码块外的BlockID）
-- 文档内的任何子块（使用代码块内的 {: id="xxx"}）
-
-**提取BlockID的方法**：
-- 从 **BlockID**: \`xxxxx\` 获取顶层块ID
-- 从 {: id="xxxxx"} 获取子块ID
-- BlockID格式通常为：时间戳-字符串，如 20240101120000-abc123
-
-编辑指令格式（必须严格遵循）：
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",  // 操作类型："update"=更新块（默认），"insert"=插入新块
-      "blockId": "要编辑的块ID（可以是顶层块或子块的ID）",
-      "newContent": "修改后的内容（kramdown格式，保留必要的ID标记）"
-    },
-    {
-      "operationType": "insert",  // 插入新块
-      "blockId": "参考块的ID（在此块前后插入）",
-      "position": "after",  // "before"=在参考块之前插入，"after"=在参考块之后插入（默认）
-      "newContent": "新插入的内容（kramdown格式）"
-    }
-  ]
-}
-\`\`\`
-
-重要规则：
-1. **必须返回JSON格式**：使用上述JSON结构，包裹在 \`\`\`json 代码块中
-2. **blockId 必须来自上下文**：从 [BlockID: xxx] 或 {: id="xxx"} 中提取
-3. **可以编辑任何有ID的块**：不限于顶层块，子块也可以精确编辑
-4. **可以插入新块**：使用 operationType: "insert" 在指定块前后插入新内容
-5. **newContent格式**：应该是kramdown格式，如果编辑子块，内容要包含该块的ID标记；插入新块时不需要ID标记
-6. **可以批量编辑**：在 editOperations 数组中包含多个编辑操作
-7. 思源笔记kramdown格式如果要添加颜色：应该是<span data-type="text">添加颜色的文字1</span>{: style="color: var(--b3-font-color1);"}，优先使用以下颜色变量：
-  - --b3-font-color1: 红色
-  - --b3-font-color2: 橙色
-  - --b3-font-color3: 蓝色
-  - --b3-font-color4: 绿色
-  - --b3-font-color5: 灰色
-8. **添加说明**：在JSON代码块之外，添加文字说明你的修改
-
-示例1 - 编辑顶层块：
-好的，我会帮你改进这段内容：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",
-      "blockId": "20240101120000-abc123",
-      "newContent": "这是修改后的整个文档内容\\n{: id=\\"20240101120000-abc123\\"}"
-    }
-  ]
-}
-\`\`\`
-
-示例2 - 编辑子块（推荐）：
-我会针对性地修改第二段和第三个列表项：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",
-      "blockId": "20240101120100-def456",
-      "newContent": "这是修改后的第二段内容，表达更专业。\\n{: id=\\"20240101120100-def456\\"}"
-    },
-    {
-      "operationType": "update",
-      "blockId": "20240101120200-ghi789",
-      "newContent": "* 这是修改后的列表项\\n  {: id=\\"20240101120200-ghi789\\"}"
-    }
-  ]
-}
-\`\`\`
-
-我针对需要改进的具体段落和列表项进行了精确修改。
-
-示例3 - 插入新块：
-我会在第二段后面插入一段补充说明：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "insert",
-      "blockId": "20240101120100-def456",
-      "position": "after",
-      "newContent": "这是新插入的补充段落，提供更多细节信息。"
-    }
-  ]
-}
-\`\`\`
-
-我在指定的段落后面添加了补充内容。
-
-示例4 - 混合操作：
-我会修改第一段并在其后插入新内容：
-
-\`\`\`json
-{
-  "editOperations": [
-    {
-      "operationType": "update",
-      "blockId": "20240101120100-def456",
-      "newContent": "这是修改后的段落内容。\\n{: id=\\"20240101120100-def456\\"}"
-    },
-    {
-      "operationType": "insert",
-      "blockId": "20240101120100-def456",
-      "position": "after",
-      "newContent": "这是紧跟在修改段落后的新增内容。"
-    }
-  ]
-}
-\`\`\`
-
-我修改了原段落并在其后添加了补充信息。
-
-注意：
-- 优先编辑子块而不是整个文档，这样更精确且不会影响其他内容
-- 只有在用户明确要求修改内容时才返回JSON编辑指令
-- 如果只是回答问题，则正常回复即可，不要返回JSON
-- 确保JSON格式正确，可以被解析
-- 确保blockId来自上下文中的ID标记（**BlockID**: \`xxx\` 或 {: id="xxx"}）
-- newContent应保留kramdown的ID标记
-- **重要**：newContent中只包含修改后的正文内容，不要包含"## 文档"、"## 块"或"**BlockID**:"这样的上下文标识，这些只是用于你理解上下文的`;
-
             // 先添加用户的系统提示词（如果有）
             if (settings.aiSystemPrompt) {
                 messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
@@ -3022,59 +3111,70 @@
             }
         }
 
-        // 限制上下文消息数量
+        // 限制上下文消息数量（基于 Token 且保持工具链完整性）
         const systemMessages = messagesToSend.filter(msg => msg.role === 'system');
         const otherMessages = messagesToSend.filter(msg => msg.role !== 'system');
-        const limitedMessages = otherMessages.slice(-tempModelSettings.contextCount);
-
-        // 建立 tool_call_id => tool 消息的索引，便于补全被截断的链条
-        const toolResultById = new Map<string, Message>();
-        for (const msg of otherMessages) {
-            if (msg.role === 'tool' && msg.tool_call_id) {
-                toolResultById.set(msg.tool_call_id, msg);
-            }
-        }
-
-        const limitedMessagesWithToolFix: Message[] = [];
-        const includedToolCallIds = new Set<string>();
-
-        for (const msg of limitedMessages) {
+        
+        // 1. 将消息分组为原子块（Chunks），确保工具链完整性
+        const chunks: Message[][] = [];
+        let i = 0;
+        while (i < otherMessages.length) {
+            const msg = otherMessages[i];
+            
             if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-                // 先推入 assistant
-                limitedMessagesWithToolFix.push(msg);
-
-                // 紧跟补全每一个 tool_call 的结果，保持顺序
-                for (const tc of msg.tool_calls) {
-                    const toolMsg = toolResultById.get(tc.id);
-                    if (toolMsg && !includedToolCallIds.has(tc.id)) {
-                        limitedMessagesWithToolFix.push(toolMsg);
-                        includedToolCallIds.add(tc.id);
+                // 开始一个工具链回合：Assistant(call) + Tool(results)
+                const chunk: Message[] = [msg];
+                let j = i + 1;
+                // 向后寻找属于这个 assistant 的 tool results
+                while (j < otherMessages.length) {
+                    const nextMsg = otherMessages[j];
+                    if (nextMsg.role === 'tool') {
+                         // 检查是否匹配 tool_calls 中的 id
+                         if (msg.tool_calls.some(tc => tc.id === nextMsg.tool_call_id)) {
+                             chunk.push(nextMsg);
+                             j++;
+                         } else {
+                             // 遇到不匹配的 tool，停止当前 chunk
+                             break;
+                         }
+                    } else {
+                        // 遇到非 tool 消息，回合结束
+                        break;
                     }
                 }
-                continue;
+                chunks.push(chunk);
+                i = j;
+            } else {
+                // 普通消息或孤立的 tool 消息（视为单独块）
+                chunks.push([msg]);
+                i++;
             }
-
-            if (msg.role === 'tool') {
-                // 仅在前一条是对应的 assistant 且未加入过时保留，避免孤立 tool
-                const prev = limitedMessagesWithToolFix[limitedMessagesWithToolFix.length - 1];
-                if (
-                    prev &&
-                    prev.role === 'assistant' &&
-                    prev.tool_calls?.some(tc => tc.id === msg.tool_call_id) &&
-                    msg.tool_call_id &&
-                    !includedToolCallIds.has(msg.tool_call_id)
-                ) {
-                    limitedMessagesWithToolFix.push(msg);
-                    includedToolCallIds.add(msg.tool_call_id);
-                }
-                continue;
-            }
-
-            // 其他消息正常保留
-            limitedMessagesWithToolFix.push(msg);
         }
 
-        messagesToSend = [...systemMessages, ...limitedMessagesWithToolFix];
+        // 2. 基于 Token 从后往前选择 Chunks
+        const systemTokens = calculateTotalTokens(systemMessages);
+        let remainingTokens = (tempModelSettings.maxContextTokens || 16384) - systemTokens;
+        
+        const keptChunks: Message[][] = [];
+        
+        // 从最新的 chunk 开始
+        for (let k = chunks.length - 1; k >= 0; k--) {
+            const chunk = chunks[k];
+            const chunkTokens = calculateTotalTokens(chunk);
+            
+            if (remainingTokens - chunkTokens >= 0) {
+                remainingTokens -= chunkTokens;
+                keptChunks.unshift(chunk);
+            } else {
+                // Token 不够了，停止
+                break;
+            }
+        }
+        
+        // 3. 展平为消息列表
+        const finalOtherMessages = keptChunks.flat();
+
+        messagesToSend = [...systemMessages, ...finalOtherMessages];
 
         // 创建新的 AbortController
         abortController = new AbortController();
@@ -3088,7 +3188,7 @@
             let toolsForAgent: any[] | undefined = undefined;
             if (chatMode === 'agent' && selectedTools.length > 0) {
                 // 根据选中的工具名称筛选出对应的工具定义
-                toolsForAgent = AVAILABLE_TOOLS.filter(tool =>
+                toolsForAgent = allTools.filter(tool =>
                     selectedTools.some(t => t.name === tool.function.name)
                 );
             }
@@ -3098,7 +3198,7 @@
                 let shouldContinue = true;
                 // 记录第一次工具调用后创建的assistant消息索引
                 let firstToolCallMessageIndex: number | null = null;
-
+                
                 while (shouldContinue && !abortController.signal.aborted) {
                     // 标记是否收到工具调用
                     let receivedToolCalls = false;
@@ -3142,81 +3242,96 @@
                                   }
                                 : undefined,
                             onToolCallComplete: async (toolCalls: ToolCall[]) => {
-                                console.log('Tool calls received:', toolCalls);
-                                receivedToolCalls = true;
+                                try {
+                                    console.log('Tool calls received:', toolCalls);
+                                    receivedToolCalls = true;
 
-                                // 如果是第一次工具调用，创建新的assistant消息
-                                if (firstToolCallMessageIndex === null) {
-                                    const assistantMessage: Message = {
-                                        role: 'assistant',
-                                        content: streamingMessage || '',
-                                        tool_calls: toolCalls,
-                                    };
-
-                                    if (isDeepseekThinkingAgent && streamingThinking) {
-                                        assistantMessage.reasoning_content = streamingThinking;
-                                        assistantMessage.thinking = streamingThinking;
+                                    // 检查是否重复调用相同的工具（防止死循环）
+                                    if (messages.length >= 2) {
+                                        const lastMsg = messages[messages.length - 1];
+                                        const secondLastMsg = messages[messages.length - 2];
+                                        
+                                        // 如果上一条是工具结果，上上条是助手消息且包含工具调用
+                                        if (lastMsg.role === 'tool' && secondLastMsg.role === 'assistant' && secondLastMsg.tool_calls) {
+                                            const prevToolCalls = secondLastMsg.tool_calls;
+                                            
+                                            // 检查当前工具调用是否与上一次完全相同
+                                            // 使用 JSON.parse 比较参数，忽略空白字符差异
+                                            const isDuplicate = toolCalls.length === prevToolCalls.length && 
+                                                toolCalls.every((tc, i) => {
+                                                    const prevTc = prevToolCalls[i];
+                                                    if (!prevTc || tc.function.name !== prevTc.function.name) return false;
+                                                    
+                                                    // 比较参数
+                                                    if (tc.function.arguments === prevTc.function.arguments) return true;
+                                                    
+                                                    try {
+                                                        const args1 = JSON.parse(tc.function.arguments);
+                                                        const args2 = JSON.parse(prevTc.function.arguments);
+                                                        // 简单的深度比较 (JSON.stringify 规范化)
+                                                        return JSON.stringify(args1) === JSON.stringify(args2);
+                                                    } catch (e) {
+                                                        return false;
+                                                    }
+                                                });
+                                                
+                                            if (isDuplicate) {
+                                                console.warn('Detected repeated tool calls with same parameters. Stopping loop.');
+                                                messages = [...messages, {
+                                                    role: 'assistant',
+                                                    content: '⚠️ 检测到重复的工具调用，已停止自动执行以防止死循环。'
+                                                }];
+                                                shouldContinue = false;
+                                                return;
+                                            }
+                                        }
                                     }
-                                    messages = [...messages, assistantMessage];
-                                    firstToolCallMessageIndex = messages.length - 1;
-                                } else {
-                                    // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
-                                    const existingMessage = messages[firstToolCallMessageIndex];
-                                    existingMessage.tool_calls = [
-                                        ...(existingMessage.tool_calls || []),
-                                        ...toolCalls,
-                                    ];
 
-                                    if (isDeepseekThinkingAgent && streamingThinking) {
-                                        existingMessage.reasoning_content = streamingThinking;
-                                        existingMessage.thinking = streamingThinking;
+                                    // 如果是第一次工具调用，创建新的assistant消息
+                                    if (firstToolCallMessageIndex === null) {
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: streamingMessage || '',
+                                            tool_calls: toolCalls,
+                                        };
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            assistantMessage.reasoning_content = streamingThinking;
+                                            assistantMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages, assistantMessage];
+                                        firstToolCallMessageIndex = messages.length - 1;
+                                    } else {
+                                        // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        existingMessage.tool_calls = [
+                                            ...(existingMessage.tool_calls || []),
+                                            ...toolCalls,
+                                        ];
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            existingMessage.reasoning_content = streamingThinking;
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages];
                                     }
-                                    messages = [...messages];
-                                }
-                                streamingMessage = '';
+                                    streamingMessage = '';
 
-                                // 处理每个工具调用
-                                for (const toolCall of toolCalls) {
-                                    const toolConfig = selectedTools.find(
-                                        t => t.name === toolCall.function.name
-                                    );
-                                    const autoApprove = toolConfig?.autoApprove || false;
+                                    // 处理每个工具调用
+                                    for (const toolCall of toolCalls) {
+                                        const toolConfig = selectedTools.find(
+                                            t => t.name === toolCall.function.name
+                                        );
+                                        const autoApprove = toolConfig?.autoApprove || false;
 
-                                    try {
-                                        let toolResult: string;
+                                        try {
+                                            let toolResult: string;
 
-                                        if (autoApprove) {
-                                            // 自动批准：直接执行工具
-                                            console.log(
-                                                `Auto-approving tool call: ${toolCall.function.name}`
-                                            );
-                                            toolResult = await executeToolCall(toolCall);
-
-                                            // 添加工具结果消息
-                                            const toolResultMessage: Message = {
-                                                role: 'tool',
-                                                tool_call_id: toolCall.id,
-                                                name: toolCall.function.name,
-                                                content: toolResult,
-                                            };
-                                            messages = [...messages, toolResultMessage];
-                                        } else {
-                                            // 需要手动批准：显示批准对话框
-                                            console.log(
-                                                `Tool call requires approval: ${toolCall.function.name}`
-                                            );
-
-                                            // 显示批准对话框
-                                            pendingToolCall = toolCall;
-                                            isToolApprovalDialogOpen = true;
-
-                                            // 等待用户批准或拒绝
-                                            const approved = await new Promise<boolean>(resolve => {
-                                                // 临时保存 resolve 函数
-                                                (window as any).__toolApprovalResolve = resolve;
-                                            });
-
-                                            if (approved) {
+                                            if (autoApprove) {
+                                                // 自动批准：直接执行工具
+                                                console.log(
+                                                    `Auto-approving tool call: ${toolCall.function.name}`
+                                                );
                                                 toolResult = await executeToolCall(toolCall);
 
                                                 // 添加工具结果消息
@@ -3228,59 +3343,91 @@
                                                 };
                                                 messages = [...messages, toolResultMessage];
                                             } else {
-                                                // 用户拒绝
-                                                const toolResultMessage: Message = {
-                                                    role: 'tool',
-                                                    tool_call_id: toolCall.id,
-                                                    name: toolCall.function.name,
-                                                    content: `用户拒绝执行工具 ${toolCall.function.name}`,
-                                                };
-                                                messages = [...messages, toolResultMessage];
+                                                // 需要手动批准：显示批准对话框
+                                                console.log(
+                                                    `Tool call requires approval: ${toolCall.function.name}`
+                                                );
+
+                                                // 显示批准对话框
+                                                pendingToolCall = toolCall;
+                                                isToolApprovalDialogOpen = true;
+
+                                                // 等待用户批准或拒绝
+                                                const approved = await new Promise<boolean>(resolve => {
+                                                    // 临时保存 resolve 函数
+                                                    (window as any).__toolApprovalResolve = resolve;
+                                                });
+
+                                                if (approved) {
+                                                    toolResult = await executeToolCall(toolCall);
+
+                                                    // 添加工具结果消息
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: toolResult,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                } else {
+                                                    // 用户拒绝
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: `用户拒绝执行工具 ${toolCall.function.name}`,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                }
                                             }
+                                        } catch (error) {
+                                            console.error(
+                                                `Tool execution failed: ${toolCall.function.name}`,
+                                                error
+                                            );
+                                            const errorMessage: Message = {
+                                                role: 'tool',
+                                                tool_call_id: toolCall.id,
+                                                name: toolCall.function.name,
+                                                content: `工具执行失败: ${(error as Error).message}`,
+                                            };
+                                            messages = [...messages, errorMessage];
                                         }
-                                    } catch (error) {
-                                        console.error(
-                                            `Tool execution failed: ${toolCall.function.name}`,
-                                            error
-                                        );
-                                        const errorMessage: Message = {
-                                            role: 'tool',
-                                            tool_call_id: toolCall.id,
-                                            name: toolCall.function.name,
-                                            content: `工具执行失败: ${(error as Error).message}`,
+                                    }
+
+                                    hasUnsavedChanges = true;
+
+                                    // 更新 messagesToSend，准备下一次循环
+                                    // 只在字段存在时才包含，避免传递 undefined 字段给 API
+                                    const systemMessages = messagesToSend.filter(
+                                        msg => msg.role === 'system'
+                                    );
+                                    const nonSystemMessages = messages.map(msg => {
+                                        const baseMsg: any = {
+                                            role: msg.role,
+                                            content: msg.content,
                                         };
-                                        messages = [...messages, errorMessage];
-                                    }
+
+                                        // 只在有工具调用相关字段时才包含
+                                        if (msg.tool_calls) {
+                                            baseMsg.tool_calls = msg.tool_calls;
+                                        }
+                                        if (msg.tool_call_id) {
+                                            baseMsg.tool_call_id = msg.tool_call_id;
+                                            baseMsg.name = msg.name;
+                                        }
+
+                                        if (isDeepseekThinkingAgent && msg.reasoning_content) {
+                                            baseMsg.reasoning_content = msg.reasoning_content;
+                                        }
+
+                                        return baseMsg;
+                                    });
+                                    messagesToSend = [...systemMessages, ...nonSystemMessages];
+                                } finally {
+                                    // 通知工具执行完成
+                                    toolExecutionComplete?.();
                                 }
-
-                                hasUnsavedChanges = true;
-
-                                // 更新 messagesToSend，准备下一次循环
-                                // 只在字段存在时才包含，避免传递 undefined 字段给 API
-                                messagesToSend = messages.map(msg => {
-                                    const baseMsg: any = {
-                                        role: msg.role,
-                                        content: msg.content,
-                                    };
-
-                                    // 只在有工具调用相关字段时才包含
-                                    if (msg.tool_calls) {
-                                        baseMsg.tool_calls = msg.tool_calls;
-                                    }
-                                    if (msg.tool_call_id) {
-                                        baseMsg.tool_call_id = msg.tool_call_id;
-                                        baseMsg.name = msg.name;
-                                    }
-
-                                    if (isDeepseekThinkingAgent && msg.reasoning_content) {
-                                        baseMsg.reasoning_content = msg.reasoning_content;
-                                    }
-
-                                    return baseMsg;
-                                });
-
-                                // 通知工具执行完成
-                                toolExecutionComplete?.();
                             },
                             onChunk: async (chunk: string) => {
                                 streamingMessage += chunk;
@@ -3726,6 +3873,11 @@
 
     // 处理键盘事件
     function handleKeydown(e: KeyboardEvent) {
+        // 如果正在使用输入法，直接返回
+        if (e.isComposing) {
+            return;
+        }
+
         const sendMode = settings.sendMessageShortcut || 'ctrl+enter';
 
         if (sendMode === 'ctrl+enter') {
@@ -7158,240 +7310,17 @@
             }
         }
 
-        // 准备发送给AI的消息（包含系统提示词和上下文文档）
-        // 深拷贝消息数组，避免修改原始消息
-        const messagesToSend = messages
-            .filter(msg => msg.role !== 'system')
-            .map((msg, index, array) => {
-                const baseMsg: any = {
-                    role: msg.role,
-                    content: msg.content,
-                };
+        const userContent =
+            typeof lastUserMessage.content === 'string'
+                ? lastUserMessage.content
+                : getMessageText(lastUserMessage.content);
 
-                // 只处理历史用户消息的上下文（不是最后一条消息）
-                // 最后一条消息将在后面用最新内容处理
-                const isLastMessage = index === array.length - 1;
-                if (
-                    !isLastMessage &&
-                    msg.role === 'user' &&
-                    msg.contextDocuments &&
-                    msg.contextDocuments.length > 0
-                ) {
-                    const hasImages = msg.attachments?.some(att => att.type === 'image');
-
-                    // 获取原始消息内容
-                    const originalContent =
-                        typeof msg.content === 'string' ? msg.content : getMessageText(msg.content);
-
-                    // 构建上下文文本
-                    const contextText = msg.contextDocuments
-                        .map(doc => {
-                            const label = doc.type === 'doc' ? '文档' : '块';
-                            return `## ${label}: ${doc.title}\n\n**BlockID**: \`${doc.id}\`\n\n\`\`\`markdown\n${doc.content}\n\`\`\``;
-                        })
-                        .join('\n\n---\n\n');
-
-                    // 如果有图片附件，使用多模态格式
-                    if (hasImages) {
-                        const contentParts: any[] = [];
-
-                        // 添加文本内容和上下文
-                        let textContent = originalContent;
-                        textContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-                        contentParts.push({ type: 'text', text: textContent });
-
-                        // 添加图片
-                        msg.attachments?.forEach(att => {
-                            if (att.type === 'image') {
-                                contentParts.push({
-                                    type: 'image_url',
-                                    image_url: { url: att.data },
-                                });
-                            }
-                        });
-
-                        // 添加文本文件内容
-                        const fileTexts = msg.attachments
-                            ?.filter(att => att.type === 'file')
-                            .map(att => `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`)
-                            .join('\n\n---\n\n');
-
-                        if (fileTexts) {
-                            contentParts.push({
-                                type: 'text',
-                                text: `\n\n以下是附件文件内容：\n\n${fileTexts}`,
-                            });
-                        }
-
-                        baseMsg.content = contentParts;
-                    } else {
-                        // 纯文本格式
-                        let enhancedContent = originalContent;
-
-                        // 添加文本文件附件
-                        if (msg.attachments && msg.attachments.length > 0) {
-                            const attachmentTexts = msg.attachments
-                                .map(att => {
-                                    if (att.type === 'file') {
-                                        return `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`;
-                                    }
-                                    return '';
-                                })
-                                .filter(Boolean)
-                                .join('\n\n---\n\n');
-
-                            if (attachmentTexts) {
-                                enhancedContent += `\n\n---\n\n以下是附件内容：\n\n${attachmentTexts}`;
-                            }
-                        }
-
-                        // 添加上下文文档
-                        enhancedContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-
-                        baseMsg.content = enhancedContent;
-                    }
-                }
-
-                return baseMsg;
-            });
-
-        // 处理最后一条用户消息，添加附件和上下文文档
-        if (messagesToSend.length > 0) {
-            const lastMessage = messagesToSend[messagesToSend.length - 1];
-            if (lastMessage.role === 'user') {
-                const lastUserMessage = messages[messages.length - 1];
-                const hasImages = lastUserMessage.attachments?.some(att => att.type === 'image');
-
-                // 查找上一条assistant消息是否有生成的图片（用于图片编辑）
-                let previousGeneratedImages: any[] = [];
-                const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant');
-                if (lastAssistantMsg) {
-                    // 检查generatedImages或attachments中的图片
-                    if (
-                        lastAssistantMsg.generatedImages &&
-                        lastAssistantMsg.generatedImages.length > 0
-                    ) {
-                        previousGeneratedImages = lastAssistantMsg.generatedImages.map(img => ({
-                            type: 'image_url' as const,
-                            image_url: {
-                                url: `data:${img.mimeType || 'image/png'};base64,${img.data}`,
-                            },
-                        }));
-                    } else if (
-                        lastAssistantMsg.attachments &&
-                        lastAssistantMsg.attachments.length > 0
-                    ) {
-                        previousGeneratedImages = lastAssistantMsg.attachments
-                            .filter(att => att.type === 'image')
-                            .map(att => ({
-                                type: 'image_url' as const,
-                                image_url: { url: att.data },
-                            }));
-                    } else if (typeof lastAssistantMsg.content === 'string') {
-                        // 从Markdown内容中提取图片URL ![image](url)
-                        const imageRegex = /!\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
-                        const content = lastAssistantMsg.content;
-                        let match;
-                        while ((match = imageRegex.exec(content)) !== null) {
-                            previousGeneratedImages.push({
-                                type: 'image_url' as const,
-                                image_url: { url: match[1] },
-                            });
-                        }
-                    }
-                }
-
-                // 如果有图片附件或上一条有生成的图片，使用多模态格式
-                if (hasImages || previousGeneratedImages.length > 0) {
-                    const contentParts: any[] = [];
-
-                    // 先添加用户输入
-                    let textContent =
-                        typeof lastUserMessage.content === 'string'
-                            ? lastUserMessage.content
-                            : getMessageText(lastUserMessage.content);
-
-                    // 然后添加上下文文档（如果有）
-                    if (contextDocumentsWithLatestContent.length > 0) {
-                        const contextText = contextDocumentsWithLatestContent
-                            .map(doc => {
-                                const label = doc.type === 'doc' ? '文档' : '块';
-                                return `## ${label}: ${doc.title}\n\n**BlockID**: \`${doc.id}\`\n\n\`\`\`markdown\n${doc.content}\n\`\`\``;
-                            })
-                            .join('\n\n---\n\n');
-                        textContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-                    }
-
-                    contentParts.push({ type: 'text', text: textContent });
-
-                    // 添加用户上传的图片
-                    lastUserMessage.attachments?.forEach(att => {
-                        if (att.type === 'image') {
-                            contentParts.push({
-                                type: 'image_url',
-                                image_url: { url: att.data },
-                            });
-                        }
-                    });
-
-                    // 添加上一次生成的图片（用于图片编辑）
-                    previousGeneratedImages.forEach(img => {
-                        contentParts.push(img);
-                    });
-
-                    // 添加文本文件内容
-                    const fileTexts = lastUserMessage.attachments
-                        ?.filter(att => att.type === 'file')
-                        .map(att => `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`)
-                        .join('\n\n---\n\n');
-
-                    if (fileTexts) {
-                        contentParts.push({
-                            type: 'text',
-                            text: `\n\n以下是附件文件内容：\n\n${fileTexts}`,
-                        });
-                    }
-
-                    lastMessage.content = contentParts;
-                } else {
-                    // 纯文本格式
-                    let enhancedContent =
-                        typeof lastUserMessage.content === 'string'
-                            ? lastUserMessage.content
-                            : getMessageText(lastUserMessage.content);
-
-                    // 添加文本文件附件
-                    if (lastUserMessage.attachments && lastUserMessage.attachments.length > 0) {
-                        const attachmentTexts = lastUserMessage.attachments
-                            .map(att => {
-                                if (att.type === 'file') {
-                                    return `## 文件: ${att.name}\n\n\`\`\`\n${att.data}\n\`\`\`\n`;
-                                }
-                                return '';
-                            })
-                            .filter(Boolean)
-                            .join('\n\n---\n\n');
-
-                        if (attachmentTexts) {
-                            enhancedContent += `\n\n---\n\n以下是附件内容：\n\n${attachmentTexts}`;
-                        }
-                    }
-
-                    // 添加上下文文档
-                    if (contextDocumentsWithLatestContent.length > 0) {
-                        const contextText = contextDocumentsWithLatestContent
-                            .map(doc => {
-                                const label = doc.type === 'doc' ? '文档' : '块';
-                                return `## ${label}: ${doc.title}\n\n**BlockID**: \`${doc.id}\`\n\n\`\`\`markdown\n${doc.content}\n\`\`\``;
-                            })
-                            .join('\n\n---\n\n');
-                        enhancedContent += `\n\n---\n\n以下是相关内容作为上下文：\n\n${contextText}`;
-                    }
-
-                    lastMessage.content = enhancedContent;
-                }
-            }
-        }
+        let messagesToSend = prepareMessagesForAI(
+            messages,
+            contextDocumentsWithLatestContent,
+            userContent,
+            lastUserMessage
+        );
 
         if (settings.aiSystemPrompt) {
             messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
@@ -7436,138 +7365,519 @@
         try {
             const enableThinking =
                 modelConfig.capabilities?.thinking && (modelConfig.thinkingEnabled || false);
-
-            // 检查是否启用图片生成
             const enableImageGeneration = modelConfig.capabilities?.imageGeneration || false;
-
-            // 用于保存生成的图片
             let generatedImages: any[] = [];
+            const isDeepseekThinkingAgent =
+                chatMode === 'agent' && currentProvider === 'deepseek' && enableThinking;
 
-            await chat(
-                currentProvider,
-                {
-                    apiKey: providerConfig.apiKey,
-                    model: modelConfig.id,
-                    messages: messagesToSend,
-                    temperature: tempModelSettings.temperatureEnabled
-                        ? tempModelSettings.temperature
-                        : modelConfig.temperature,
-                    maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
-                    stream: true,
-                    signal: abortController.signal,
-                    customBody,
-                    enableThinking,
-                    reasoningEffort: modelConfig.thinkingEffort || 'low',
-                    enableImageGeneration,
-                    onThinkingChunk: enableThinking
-                        ? async (chunk: string) => {
-                              isThinkingPhase = true;
-                              streamingThinking += chunk;
-                              await scrollToBottom();
-                          }
-                        : undefined,
-                    onThinkingComplete: enableThinking
-                        ? (thinking: string) => {
-                              isThinkingPhase = false;
-                              thinkingCollapsed[messages.length] = true;
-                          }
-                        : undefined,
-                    onImageGenerated: (images: any[]) => {
-                        generatedImages = images;
-                    },
-                    onChunk: async (chunk: string) => {
-                        streamingMessage += chunk;
-                        await scrollToBottom();
-                    },
-                    onComplete: async (fullText: string) => {
-                        // 如果已经中断，不再添加消息（避免重复）
-                        if (isAborted) {
-                            return;
-                        }
+            // 准备 Agent 模式的工具列表
+            let toolsForAgent: any[] | undefined = undefined;
+            if (chatMode === 'agent' && selectedTools.length > 0) {
+                // 根据选中的工具名称筛选出对应的工具定义
+                toolsForAgent = allTools.filter(tool =>
+                    selectedTools.some(t => t.name === tool.function.name)
+                );
+            }
 
-                        // 转换 LaTeX 数学公式格式为 Markdown 格式
-                        const convertedText = convertLatexToMarkdown(fullText);
+            // Agent 模式使用循环调用
+            if (chatMode === 'agent' && toolsForAgent && toolsForAgent.length > 0) {
+                let shouldContinue = true;
+                // 记录第一次工具调用后创建的assistant消息索引
+                let firstToolCallMessageIndex: number | null = null;
+                
+                while (shouldContinue && !abortController.signal.aborted) {
+                    // 标记是否收到工具调用
+                    let receivedToolCalls = false;
+                    // 用于等待工具执行完成的 Promise
+                    let toolExecutionComplete: (() => void) | null = null;
+                    const toolExecutionPromise = new Promise<void>(resolve => {
+                        toolExecutionComplete = resolve;
+                    });
 
-                        const assistantMessage: Message = {
-                            role: 'assistant',
-                            content: convertedText,
-                        };
+                    generatedImages = [];
+                    await chat(
+                        currentProvider,
+                        {
+                            apiKey: providerConfig.apiKey,
+                            model: modelConfig.id,
+                            messages: messagesToSend,
+                            temperature: tempModelSettings.temperatureEnabled
+                                ? tempModelSettings.temperature
+                                : modelConfig.temperature,
+                            maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
+                            stream: true,
+                            signal: abortController.signal,
+                            enableThinking,
+                            reasoningEffort: modelConfig.thinkingEffort || 'medium',
+                            tools: toolsForAgent,
+                            customBody, // 传递自定义参数
+                            enableImageGeneration,
+                            onThinkingChunk: enableThinking
+                                ? async (chunk: string) => {
+                                      isThinkingPhase = true;
+                                      streamingThinking += chunk;
+                                      await scrollToBottom();
+                                  }
+                                : undefined,
+                            onThinkingComplete: enableThinking
+                                ? (thinking: string) => {
+                                      isThinkingPhase = false;
+                                      thinkingCollapsed = {
+                                          ...thinkingCollapsed,
+                                          [messages.length]: true,
+                                      };
+                                  }
+                                : undefined,
+                            onImageGenerated: (images: any[]) => {
+                                generatedImages = images;
+                            },
+                            onToolCallComplete: async (toolCalls: ToolCall[]) => {
+                                try {
+                                    console.log('Tool calls received:', toolCalls);
+                                    receivedToolCalls = true;
+                                    // 检查是否重复调用相同的工具（防止死循环）
+                                    if (messages.length >= 2) {
+                                        const lastMsg = messages[messages.length - 1];
+                                        const secondLastMsg = messages[messages.length - 2];
+                                        
+                                        // 如果上一条是工具结果，上上条是助手消息且包含工具调用
+                                        if (lastMsg.role === 'tool' && secondLastMsg.role === 'assistant' && secondLastMsg.tool_calls) {
+                                            const prevToolCalls = secondLastMsg.tool_calls;
+                                            
+                                            // 检查当前工具调用是否与上一次完全相同
+                                            const isDuplicate = toolCalls.length === prevToolCalls.length && 
+                                                toolCalls.every((tc, i) => {
+                                                    const prevTc = prevToolCalls[i];
+                                                    if (!prevTc || tc.function.name !== prevTc.function.name) return false;
+                                                    
+                                                    // 比较参数
+                                                    if (tc.function.arguments === prevTc.function.arguments) return true;
+                                                    
+                                                    try {
+                                                        const args1 = JSON.parse(tc.function.arguments);
+                                                        const args2 = JSON.parse(prevTc.function.arguments);
+                                                        return JSON.stringify(args1) === JSON.stringify(args2);
+                                                    } catch (e) {
+                                                        return false;
+                                                    }
+                                                });
+                                                
+                                            if (isDuplicate) {
+                                                console.warn('Detected repeated tool calls with same parameters. Stopping loop.');
+                                                messages = [...messages, {
+                                                    role: 'assistant',
+                                                    content: '⚠️ 检测到重复的工具调用，已停止自动执行以防止死循环。'
+                                                }];
+                                                shouldContinue = false;
+                                                return;
+                                            }
+                                        }
+                                    }
 
-                        if (enableThinking && streamingThinking) {
-                            assistantMessage.thinking = streamingThinking;
-                        }
+                                    // 如果是第一次工具调用，创建新的assistant消息
+                                    if (firstToolCallMessageIndex === null) {
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: streamingMessage || '',
+                                            tool_calls: toolCalls,
+                                        };
 
-                        // 如果有生成的图片，保存到消息中
-                        if (generatedImages.length > 0) {
-                            // 先异步保存所有图片到 SiYuan 资源文件夹
-                            const processedImages = await Promise.all(
-                                generatedImages.map(async (img, idx) => {
-                                    const blob = base64ToBlob(
-                                        img.data,
-                                        img.mimeType || 'image/png'
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            assistantMessage.reasoning_content = streamingThinking;
+                                            assistantMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages, assistantMessage];
+                                        firstToolCallMessageIndex = messages.length - 1;
+                                    } else {
+                                        // 如果不是第一次，更新现有消息的tool_calls（合并工具调用）
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        existingMessage.tool_calls = [
+                                            ...(existingMessage.tool_calls || []),
+                                            ...toolCalls,
+                                        ];
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            existingMessage.reasoning_content = streamingThinking;
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+                                        messages = [...messages];
+                                    }
+                                    streamingMessage = '';
+
+                                    // 处理每个工具调用
+                                    for (const toolCall of toolCalls) {
+                                        const toolConfig = selectedTools.find(
+                                            t => t.name === toolCall.function.name
+                                        );
+                                        const autoApprove = toolConfig?.autoApprove || false;
+
+                                        try {
+                                            let toolResult: string;
+
+                                            if (autoApprove) {
+                                                console.log(
+                                                    `Auto-approving tool call: ${toolCall.function.name}`
+                                                );
+                                                toolResult = await executeToolCall(toolCall);
+
+                                                const toolResultMessage: Message = {
+                                                    role: 'tool',
+                                                    tool_call_id: toolCall.id,
+                                                    name: toolCall.function.name,
+                                                    content: toolResult,
+                                                };
+                                                messages = [...messages, toolResultMessage];
+                                            } else {
+                                                console.log(
+                                                    `Tool call requires approval: ${toolCall.function.name}`
+                                                );
+
+                                                pendingToolCall = toolCall;
+                                                isToolApprovalDialogOpen = true;
+
+                                                const approved = await new Promise<boolean>(resolve => {
+                                                    (window as any).__toolApprovalResolve = resolve;
+                                                });
+
+                                                if (approved) {
+                                                    toolResult = await executeToolCall(toolCall);
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: toolResult,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                } else {
+                                                    const toolResultMessage: Message = {
+                                                        role: 'tool',
+                                                        tool_call_id: toolCall.id,
+                                                        name: toolCall.function.name,
+                                                        content: `用户拒绝执行工具 ${toolCall.function.name}`,
+                                                    };
+                                                    messages = [...messages, toolResultMessage];
+                                                }
+                                            }
+                                        } catch (error) {
+                                            console.error(
+                                                `Tool execution failed: ${toolCall.function.name}`,
+                                                error
+                                            );
+                                            const errorMessage: Message = {
+                                                role: 'tool',
+                                                tool_call_id: toolCall.id,
+                                                name: toolCall.function.name,
+                                                content: `工具执行失败: ${(error as Error).message}`,
+                                            };
+                                            messages = [...messages, errorMessage];
+                                        }
+                                    }
+
+                                    hasUnsavedChanges = true;
+
+                                    // 更新 messagesToSend，准备下一次循环
+                                    const systemMessages = messagesToSend.filter(
+                                        msg => msg.role === 'system'
                                     );
-                                    const name = `generated-image-${idx + 1}.${
-                                        img.mimeType?.split('/')[1] || 'png'
-                                    }`;
-                                    const assetPath = await saveAsset(blob, name);
-                                    return {
-                                        ...img,
-                                        path: assetPath,
-                                        // 给前端显示用的 blob url
-                                        previewUrl: URL.createObjectURL(blob),
+                                    const nonSystemMessages = messages.map(msg => {
+                                        const baseMsg: any = {
+                                            role: msg.role,
+                                            content: msg.content,
+                                        };
+
+                                        if (msg.tool_calls) {
+                                            baseMsg.tool_calls = msg.tool_calls;
+                                        }
+                                        if (msg.tool_call_id) {
+                                            baseMsg.tool_call_id = msg.tool_call_id;
+                                            baseMsg.name = msg.name;
+                                        }
+
+                                        if (isDeepseekThinkingAgent && msg.reasoning_content) {
+                                            baseMsg.reasoning_content = msg.reasoning_content;
+                                        }
+
+                                        return baseMsg;
+                                    });
+                                    messagesToSend = [...systemMessages, ...nonSystemMessages];
+                                } finally {
+                                    toolExecutionComplete?.();
+                                }
+                            },
+                            onChunk: async (chunk: string) => {
+                                streamingMessage += chunk;
+                                await scrollToBottom();
+                            },
+                            onComplete: async (fullText: string) => {
+                                if (isAborted) {
+                                    shouldContinue = false;
+                                    toolExecutionComplete?.();
+                                    return;
+                                }
+
+                                if (!receivedToolCalls) {
+                                    shouldContinue = false;
+
+                                    const convertedText = convertLatexToMarkdown(fullText);
+                                    const processedImages =
+                                        generatedImages.length > 0
+                                            ? await Promise.all(
+                                                  generatedImages.map(async (img, idx) => {
+                                                      const blob = base64ToBlob(
+                                                          img.data,
+                                                          img.mimeType || 'image/png'
+                                                      );
+                                                      const name = `generated-image-${idx + 1}.${
+                                                          img.mimeType?.split('/')[1] || 'png'
+                                                      }`;
+                                                      const assetPath = await saveAsset(blob, name);
+                                                      return {
+                                                          ...img,
+                                                          path: assetPath,
+                                                          previewUrl: URL.createObjectURL(blob),
+                                                      };
+                                                  })
+                                              )
+                                            : [];
+
+                                    if (
+                                        firstToolCallMessageIndex !== null &&
+                                        convertedText.trim()
+                                    ) {
+                                        const existingMessage = messages[firstToolCallMessageIndex];
+                                        existingMessage.finalReply = convertedText;
+
+                                        if (processedImages.length > 0) {
+                                            existingMessage.generatedImages = processedImages.map(
+                                                img => ({
+                                                    mimeType: img.mimeType,
+                                                    data: '',
+                                                    path: img.path,
+                                                })
+                                            );
+                                            existingMessage.attachments = processedImages.map(
+                                                (img, idx) => ({
+                                                    type: 'image' as const,
+                                                    name: `generated-image-${idx + 1}.${
+                                                        img.mimeType?.split('/')[1] || 'png'
+                                                    }`,
+                                                    data: img.previewUrl,
+                                                    path: img.path,
+                                                    mimeType: img.mimeType || 'image/png',
+                                                })
+                                            );
+                                        }
+
+                                        if (isDeepseekThinkingAgent && streamingThinking) {
+                                            existingMessage.reasoning_content = streamingThinking;
+                                        }
+
+                                        if (enableThinking && streamingThinking) {
+                                            existingMessage.thinking = streamingThinking;
+                                        }
+
+                                        messages = [...messages];
+                                    } else {
+                                        const assistantMessage: Message = {
+                                            role: 'assistant',
+                                            content: convertedText,
+                                        };
+
+                                        if (processedImages.length > 0) {
+                                            assistantMessage.generatedImages = processedImages.map(
+                                                img => ({
+                                                    mimeType: img.mimeType,
+                                                    data: '',
+                                                    path: img.path,
+                                                })
+                                            );
+                                            assistantMessage.attachments = processedImages.map(
+                                                (img, idx) => ({
+                                                    type: 'image' as const,
+                                                    name: `generated-image-${idx + 1}.${
+                                                        img.mimeType?.split('/')[1] || 'png'
+                                                    }`,
+                                                    data: img.previewUrl,
+                                                    path: img.path,
+                                                    mimeType: img.mimeType || 'image/png',
+                                                })
+                                            );
+                                        }
+
+                                        if (enableThinking && streamingThinking) {
+                                            assistantMessage.thinking = streamingThinking;
+                                            if (isDeepseekThinkingAgent) {
+                                                assistantMessage.reasoning_content =
+                                                    streamingThinking;
+                                            }
+                                        }
+
+                                        messages = [...messages, assistantMessage];
+                                    }
+
+                                    streamingMessage = '';
+                                    streamingThinking = '';
+                                    isThinkingPhase = false;
+                                    isLoading = false;
+                                    abortController = null;
+                                    hasUnsavedChanges = true;
+
+                                    await saveCurrentSession(true);
+
+                                    toolExecutionComplete?.();
+                                }
+                            },
+                            onError: (error: Error) => {
+                                shouldContinue = false;
+                                if (error.message !== 'Request aborted') {
+                                    const errorMessage: Message = {
+                                        role: 'assistant',
+                                        content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
                                     };
-                                })
-                            );
+                                    messages = [...messages, errorMessage];
+                                    hasUnsavedChanges = true;
+                                }
+                                isLoading = false;
+                                streamingMessage = '';
+                                streamingThinking = '';
+                                isThinkingPhase = false;
+                                abortController = null;
+                                
+                                toolExecutionComplete?.();
+                            },
+                        },
+                        providerConfig.customApiUrl,
+                        providerConfig.advancedConfig
+                    );
 
-                            assistantMessage.generatedImages = processedImages.map(img => ({
-                                mimeType: img.mimeType,
-                                data: '', // 不再这里存数据
-                                path: img.path,
-                            }));
+                    await toolExecutionPromise;
+                }
+            } else {
+                generatedImages = [];
+                await chat(
+                    currentProvider,
+                    {
+                        apiKey: providerConfig.apiKey,
+                        model: modelConfig.id,
+                        messages: messagesToSend,
+                        temperature: tempModelSettings.temperatureEnabled
+                            ? tempModelSettings.temperature
+                            : modelConfig.temperature,
+                        maxTokens: modelConfig.maxTokens > 0 ? modelConfig.maxTokens : undefined,
+                        stream: true,
+                        signal: abortController.signal,
+                        customBody,
+                        enableThinking,
+                        reasoningEffort: modelConfig.thinkingEffort || 'low',
+                        enableImageGeneration,
+                        onThinkingChunk: enableThinking
+                            ? async (chunk: string) => {
+                                  isThinkingPhase = true;
+                                  streamingThinking += chunk;
+                                  await scrollToBottom();
+                              }
+                            : undefined,
+                        onThinkingComplete: enableThinking
+                            ? (thinking: string) => {
+                                  isThinkingPhase = false;
+                                  thinkingCollapsed = {
+                                      ...thinkingCollapsed,
+                                      [messages.length]: true,
+                                  };
+                              }
+                            : undefined,
+                        onImageGenerated: (images: any[]) => {
+                            generatedImages = images;
+                        },
+                        onChunk: async (chunk: string) => {
+                            streamingMessage += chunk;
+                            await scrollToBottom();
+                        },
+                        onComplete: async (fullText: string) => {
+                            // 如果已经中断，不再添加消息（避免重复）
+                            if (isAborted) {
+                                return;
+                            }
 
-                            // 同时添加为附件以便显示
-                            assistantMessage.attachments = processedImages.map((img, idx) => ({
-                                type: 'image' as const,
-                                name: `generated-image-${idx + 1}.${
-                                    img.mimeType?.split('/')[1] || 'png'
-                                }`,
-                                data: img.previewUrl,
-                                path: img.path,
-                                mimeType: img.mimeType || 'image/png',
-                            }));
-                        }
+                            // 转换 LaTeX 数学公式格式为 Markdown 格式
+                            const convertedText = convertLatexToMarkdown(fullText);
 
-                        messages = [...messages, assistantMessage];
-                        streamingMessage = '';
-                        streamingThinking = '';
-                        isThinkingPhase = false;
-                        isLoading = false;
-                        abortController = null;
-                        hasUnsavedChanges = true;
-
-                        // AI 回复完成后，自动保存当前会话
-                        await saveCurrentSession(true);
-                    },
-                    onError: (error: Error) => {
-                        if (error.message !== 'Request aborted') {
-                            // 将错误消息作为一条 assistant 消息添加
-                            const errorMessage: Message = {
+                            const assistantMessage: Message = {
                                 role: 'assistant',
-                                content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                content: convertedText,
                             };
-                            messages = [...messages, errorMessage];
+
+                            if (generatedImages.length > 0) {
+                                const processedImages = await Promise.all(
+                                    generatedImages.map(async (img, idx) => {
+                                        const blob = base64ToBlob(
+                                            img.data,
+                                            img.mimeType || 'image/png'
+                                        );
+                                        const name = `generated-image-${idx + 1}.${
+                                            img.mimeType?.split('/')[1] || 'png'
+                                        }`;
+                                        const assetPath = await saveAsset(blob, name);
+                                        return {
+                                            ...img,
+                                            path: assetPath,
+                                            previewUrl: URL.createObjectURL(blob),
+                                        };
+                                    })
+                                );
+
+                                assistantMessage.generatedImages = processedImages.map(img => ({
+                                    mimeType: img.mimeType,
+                                    data: '',
+                                    path: img.path,
+                                }));
+                                assistantMessage.attachments = processedImages.map((img, idx) => ({
+                                    type: 'image' as const,
+                                    name: `generated-image-${idx + 1}.${
+                                        img.mimeType?.split('/')[1] || 'png'
+                                    }`,
+                                    data: img.previewUrl,
+                                    path: img.path,
+                                    mimeType: img.mimeType || 'image/png',
+                                }));
+                            }
+
+                            if (enableThinking && streamingThinking) {
+                                assistantMessage.thinking = streamingThinking;
+                            }
+
+                            messages = [...messages, assistantMessage];
+                            streamingMessage = '';
+                            streamingThinking = '';
+                            isThinkingPhase = false;
+                            isLoading = false;
+                            abortController = null;
                             hasUnsavedChanges = true;
-                        }
-                        isLoading = false;
-                        streamingMessage = '';
-                        streamingThinking = '';
-                        isThinkingPhase = false;
-                        abortController = null;
+
+                            // AI 回复完成后，自动保存当前会话
+                            await saveCurrentSession(true);
+                        },
+                        onError: (error: Error) => {
+                            if (error.message !== 'Request aborted') {
+                                // 将错误消息作为一条 assistant 消息添加
+                                const errorMessage: Message = {
+                                    role: 'assistant',
+                                    content: `❌ **${t('aiSidebar.errors.requestFailed')}**\n\n${error.message}`,
+                                };
+                                messages = [...messages, errorMessage];
+                                hasUnsavedChanges = true;
+                            }
+                            isLoading = false;
+                            streamingMessage = '';
+                            streamingThinking = '';
+                            isThinkingPhase = false;
+                            abortController = null;
+                        },
                     },
-                },
-                providerConfig.customApiUrl,
-                providerConfig.advancedConfig
-            );
+                    providerConfig.customApiUrl,
+                    providerConfig.advancedConfig
+                );
+            }
         } catch (error) {
             console.error('Regenerate message error:', error);
             // onError 回调已经处理了错误消息的添加，这里不需要重复添加
@@ -8331,24 +8641,33 @@
                 <!-- 显示流式思考过程 -->
                 {#if streamingThinking}
                     <div class="ai-message__thinking">
-                        <div class="ai-message__thinking-header">
-                            <svg class="ai-message__thinking-icon">
+                        <div
+                            class="ai-message__thinking-header"
+                            on:click={() =>
+                                (isStreamingThinkingCollapsed = !isStreamingThinkingCollapsed)}
+                        >
+                            <svg
+                                class="ai-message__thinking-icon"
+                                class:collapsed={isStreamingThinkingCollapsed}
+                            >
                                 <use xlink:href="#iconRight"></use>
                             </svg>
                             <span class="ai-message__thinking-title">
                                 💭 思考中{isThinkingPhase ? '...' : ' (已完成)'}
                             </span>
                         </div>
-                        {#if !isThinkingPhase}
-                            <div class="ai-message__thinking-content b3-typography">
-                                {@html formatMessage(streamingThinking)}
-                            </div>
-                        {:else}
-                            <div
-                                class="ai-message__thinking-content ai-message__thinking-content--streaming b3-typography"
-                            >
-                                {@html formatMessage(streamingThinking)}
-                            </div>
+                        {#if !isStreamingThinkingCollapsed}
+                            {#if !isThinkingPhase}
+                                <div class="ai-message__thinking-content b3-typography">
+                                    {@html formatMessage(streamingThinking)}
+                                </div>
+                            {:else}
+                                <div
+                                    class="ai-message__thinking-content ai-message__thinking-content--streaming b3-typography"
+                                >
+                                    {@html formatMessage(streamingThinking)}
+                                </div>
+                            {/if}
                         {/if}
                     </div>
                 {/if}
@@ -8828,7 +9147,7 @@
             {#if chatMode === 'agent'}
                 <button
                     class="b3-button b3-button--text ai-sidebar__tool-selector-btn"
-                    on:click={() => (isToolSelectorOpen = !isToolSelectorOpen)}
+                    on:click={toggleToolSelector}
                     title={t('aiSidebar.agent.selectTools')}
                 >
                     <svg class="b3-button__icon"><use xlink:href="#iconSettings"></use></svg>
@@ -9502,7 +9821,11 @@
 
     <!-- 工具选择器对话框 -->
     {#if isToolSelectorOpen}
-        <ToolSelector bind:selectedTools on:close={() => (isToolSelectorOpen = false)} />
+        <ToolSelector
+            bind:selectedTools
+            availableTools={allTools}
+            on:close={() => (isToolSelectorOpen = false)}
+        />
     {/if}
 
     <!-- 保存到笔记对话框 -->
@@ -10349,7 +10672,7 @@
         .ai-message__content {
             background: var(--b3-theme-background);
             color: var(--b3-theme-on-background);
-            max-width: 90%;
+            max-width: 100%;
         }
 
         .ai-message__actions {

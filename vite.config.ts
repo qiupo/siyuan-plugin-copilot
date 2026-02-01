@@ -23,6 +23,8 @@ export default defineConfig({
     resolve: {
         alias: {
             "@": resolve(__dirname, "src"),
+            "node:process": resolve(__dirname, "src/polyfill.ts"),
+            "process": resolve(__dirname, "src/polyfill.ts"),
         }
     },
 
@@ -63,7 +65,7 @@ export default defineConfig({
 
     define: {
         "process.env.DEV_MODE": JSON.stringify(isDev),
-        "process.env.NODE_ENV": JSON.stringify(env.NODE_ENV)
+        "process.env.NODE_ENV": JSON.stringify(env.NODE_ENV),
     },
 
     build: {
@@ -109,9 +111,27 @@ export default defineConfig({
                 ])
             ],
 
-            external: ["siyuan", "process"],
+            external: [
+                "siyuan", 
+                "node:stream", 
+                "node:events",
+                "node:util",
+                "child_process", 
+                "fs", 
+                "path", 
+                "events", 
+                "stream",
+                "util",
+                "os",
+                "url",
+                "http",
+                "https",
+                "crypto",
+                "buffer"
+            ],
 
             output: {
+                inlineDynamicImports: true,
                 entryFileNames: "[name].js",
                 assetFileNames: (assetInfo) => {
                     if (assetInfo.name === "style.css") {

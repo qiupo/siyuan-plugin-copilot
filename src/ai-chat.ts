@@ -104,7 +104,7 @@ export interface ChatOptions {
     onThinkingComplete?: (thinking: string) => void; // 思考完成回调
     tools?: any[]; // Agent模式的工具列表
     onToolCall?: (toolCall: ToolCall) => void; // Tool Call 回调
-    onToolCallComplete?: (toolCalls: ToolCall[]) => void; // Tool Calls 完成回调
+    onToolCallComplete?: (toolCalls: ToolCall[]) => Promise<void>; // Tool Calls 完成回调
     customBody?: any; // 自定义请求体参数
     enableImageGeneration?: boolean; // 是否启用图片生成
     onImageGenerated?: (images: GeneratedImageData[]) => void; // 图片生成回调
@@ -642,6 +642,11 @@ async function chatOpenAIFormat(
             options.onError?.(new Error('Request aborted'));
         } else {
             console.error('Chat error:', error);
+            const errMsg = (error as Error).message || String(error);
+            if (errMsg.includes('Failed to fetch')) {
+                options.onError?.(new Error(`无法连接到 AI 服务，请检查网络或 API 地址是否正确。(Failed to fetch)`));
+                return;
+            }
             options.onError?.(error as Error);
         }
         throw error;
@@ -952,7 +957,7 @@ async function handleStreamResponse(
                 }));
 
             if (toolCalls.length > 0 && options.onToolCallComplete) {
-                options.onToolCallComplete(toolCalls);
+                await options.onToolCallComplete(toolCalls);
             }
         }
 
@@ -1324,4 +1329,38 @@ export function isImageGenerationSupported(provider: string, modelId: string): b
 
     const lowerModelId = modelId.toLowerCase();
     return supportedModels.some(m => lowerModelId.includes(m));
+/**
+ * 根据Token限制截断消息列表
+ * @param messages 消息列表
+ * @param maxTokens 最大Token数
+ * @returns 截断后的消息列表
+ */
+export function limitMessagesByTokens(messages: Message[], maxTokens: number): Message[] {
+    // 始终保留 system 消息
+    const systemMessages = messages.filter(msg => msg.role === 'system');
+    const systemTokens = calculateTotalTokens(systemMessages);
+    
+    let remainingTokens = maxTokens - systemTokens;
+    if (remainingTokens <= 0) {
+        return systemMessages;
+    }
+
+    const otherMessages = messages.filter(msg => msg.role !== 'system');
+    const keptMessages: Message[] = [];
+    
+    // 从后往前添加消息
+    for (let i = otherMessages.length - 1; i >= 0; i--) {
+        const msg = otherMessages[i];
+        const msgTokens = calculateTotalTokens([msg]);
+        
+        if (remainingTokens - msgTokens < 0) {
+            break;
+        }
+        
+        remainingTokens -= msgTokens;
+        keptMessages.unshift(msg);
+    }
+    
+    // 合并 system 消息和保留的消息
+    return [...systemMessages, ...keptMessages];
 }

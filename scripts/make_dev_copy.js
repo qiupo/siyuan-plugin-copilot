@@ -2,15 +2,20 @@
  * Copyright (c) 2024 by frostime. All Rights Reserved.
  * @Author       : frostime
  * @Date         : 2025-07-13
- * @FilePath     : /scripts/make_dev_copy.js
- * @LastEditTime : 2025-07-13
+ * @FilePath: /siyuan-plugin-copilot/scripts/make_dev_copy.js
+ * @LastEditTime: 2026-01-27 14:22:24
  * @Description  : Copy plugin files to SiYuan plugins directory instead of creating symbolic links
  */
 import fs from 'fs';
 import path from 'path';
 import { log, error, getSiYuanDir, chooseTarget, getThisPluginName, copyDirectory } from './utils.js';
 
-let targetDir = `D:\\Notes\\Siyuan\\Achuan-2\\data\\plugins`;
+let targetDir = '';
+if (process.platform === 'win32') {
+    targetDir = `D:\\desktop\\code\\siyuan\\data\\plugins`;
+} else if (process.platform === 'darwin') {
+    targetDir = `${process.env.HOME}/SiYuan/data/plugins`;
+}
 // let targetDir =`C:\\Users\\wangmin\\Documents\\siyuan_plugins_test\\data\\plugins`;
 // let targetDir =`C:\\Users\\wangmin\\Documents\\Project Code\\notebook\\data\\plugins`;
 

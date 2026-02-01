@@ -9,6 +9,7 @@
     export let currentModelId = '';
     export let appliedSettings = {
         contextCount: 10,
+        maxContextTokens: 16384,
         temperature: 0.7,
         temperatureEnabled: true,
         systemPrompt: '',
@@ -22,21 +23,21 @@
 
     const dispatch = createEventDispatcher();
 
-    // 预设列表弹窗
-    let isPresetListOpen = false;
-    let presetListTop = 0;
-    let presetListLeft = 0;
-    let buttonElement: HTMLButtonElement;
-    let presetListElement: HTMLDivElement;
-
-    // 设置面板弹窗
     let isSettingsOpen = false;
+    let isPresetListOpen = false;
+
     let settingsTop = 0;
     let settingsLeft = 0;
-    let settingsElement: HTMLDivElement;
+    let presetListTop = 0;
+    let presetListLeft = 0;
+
+    let presetButtonElement: HTMLButtonElement;
+    let settingsDropdownElement: HTMLDivElement;
+    let presetDropdownElement: HTMLDivElement;
 
     // 模型设置（临时值，用于编辑）
     let tempContextCount = 10;
+    let tempMaxContextTokens = 16384; // 最大上下文Token数
     let tempTemperature = 0.7;
     let tempTemperatureEnabled = false;
     let tempSystemPrompt = '';
@@ -54,6 +55,7 @@
         id: string;
         name: string;
         contextCount: number;
+        maxContextTokens?: number; // 最大上下文Token数
         temperature: number;
         temperatureEnabled: boolean;
         systemPrompt: string;
@@ -67,7 +69,7 @@
 
     let presets: Preset[] = [];
     let selectedPresetId: string = '';
-    let newPresetName = '';
+    let newPresetName = '新预设';
 
     // 拖拽排序相关（预设列表）
     let dragSrcIndex: number | null = null;
@@ -301,6 +303,7 @@
             id: Date.now().toString(),
             name: newPresetName.trim(),
             contextCount: tempContextCount,
+            maxContextTokens: tempMaxContextTokens,
             temperature: tempTemperature,
             temperatureEnabled: tempTemperatureEnabled,
             systemPrompt: tempSystemPrompt,
@@ -314,7 +317,7 @@
 
         presets = [...presets, preset];
         await savePresetsToStorage();
-        newPresetName = '';
+        newPresetName = '新预设';
 
         // 自动选择新建的预设
         selectedPresetId = preset.id;
@@ -327,47 +330,49 @@
         openPresetList();
     }
 
-    // 选择预设（直接应用，不打开设置面板）
-    async function selectPreset(presetId: string) {
-        // 如果点击的是已选择的预设，则取消选择
+    // 加载预设
+    async function loadPreset(presetId: string) {
         if (selectedPresetId === presetId) {
-            selectedPresetId = '';
-            await saveSelectedPresetId('');
-            // 重置为当前应用的设置
-            await resetToAppliedSettings();
+            isPresetListOpen = false;
             return;
         }
 
         const preset = presets.find(p => p.id === presetId);
         if (preset) {
+            tempContextCount = preset.contextCount;
+            tempMaxContextTokens = preset.maxContextTokens ?? 16384;
+            tempTemperature = preset.temperature;
+            tempTemperatureEnabled = preset.temperatureEnabled ?? true;
+            tempSystemPrompt = preset.systemPrompt;
+            tempModelSelectionEnabled = preset.modelSelectionEnabled ?? false;
+            tempSelectedModels = [...(preset.selectedModels || [])];
+            tempEnableMultiModel = preset.enableMultiModel ?? false;
+            tempChatMode = preset.chatMode || 'ask';
+            tempModelThinkingSettings = { ...(preset.modelThinkingSettings || {}) };
+
             selectedPresetId = presetId;
             await saveSelectedPresetId(presetId);
 
-            // 应用预设设置
-            dispatch('apply', {
-                contextCount: preset.contextCount,
-                temperature: preset.temperature,
-                temperatureEnabled: preset.temperatureEnabled ?? true,
-                systemPrompt: preset.systemPrompt,
-                modelSelectionEnabled: preset.modelSelectionEnabled ?? false,
-                selectedModels: preset.selectedModels || [],
-                enableMultiModel: preset.enableMultiModel ?? false,
-                chatMode: preset.chatMode || 'ask',
-                modelThinkingSettings: preset.modelThinkingSettings || {},
-            });
+            applySettings();
 
             pushMsg(`已应用预设: ${preset.name}`);
+            isPresetListOpen = false;
         }
     }
 
+    async function selectPreset(presetId: string) {
+        await loadPreset(presetId);
+    }
+
     // 编辑预设（打开设置面板）
-    function editPreset(presetId: string) {
+    async function editPreset(presetId: string) {
         const preset = presets.find(p => p.id === presetId);
         if (!preset) return;
 
         editingPresetId = presetId;
-        newPresetName = preset.name; // 加载预设名称
+        newPresetName = preset.name;
         tempContextCount = preset.contextCount;
+        tempMaxContextTokens = preset.maxContextTokens ?? 16384;
         tempTemperature = preset.temperature;
         tempTemperatureEnabled = preset.temperatureEnabled ?? true;
         tempSystemPrompt = preset.systemPrompt;
@@ -377,15 +382,25 @@
         tempChatMode = preset.chatMode || 'ask';
         tempModelThinkingSettings = { ...(preset.modelThinkingSettings || {}) };
 
-        // 关闭预设列表，打开设置面板
         isPresetListOpen = false;
-        openSettings();
+        await openSettingsPanel();
+    }
+
+    async function configurePreset(presetId: string) {
+        await editPreset(presetId);
+    }
+
+    function backToPresetList() {
+        isSettingsOpen = false;
+        editingPresetId = '';
+        document.removeEventListener('click', closeSettingsOnOutsideClick);
+        openPresetList();
     }
 
     // 删除预设
     function deletePreset(presetId: string) {
         // 临时移除外部点击监听器
-        document.removeEventListener('click', closeOnOutsideClick);
+        document.removeEventListener('click', closePresetListOnOutsideClick);
 
         confirm(
             t('aiSidebar.modelSettings.deletePreset'),
@@ -394,15 +409,20 @@
                 presets = presets.filter(p => p.id !== presetId);
                 await savePresetsToStorage();
                 if (selectedPresetId === presetId) {
-                    selectedPresetId = '';
-                    await saveSelectedPresetId('');
+                    if (presets.length > 0) {
+                        // 如果还有其他预设，自动加载第一个
+                        await loadPreset(presets[0].id);
+                    } else {
+                        // 如果没有预设了，重置为默认
+                        await resetToDefaults();
+                    }
                 }
                 pushMsg(t('aiSidebar.modelSettings.presetDeleted'));
 
                 // 重新添加外部点击监听器
                 setTimeout(() => {
                     if (isPresetListOpen) {
-                        document.addEventListener('click', closeOnOutsideClick);
+                        document.addEventListener('click', closePresetListOnOutsideClick);
                     }
                 }, 0);
             },
@@ -410,7 +430,7 @@
                 // 用户取消删除，重新添加外部点击监听器
                 setTimeout(() => {
                     if (isPresetListOpen) {
-                        document.addEventListener('click', closeOnOutsideClick);
+                        document.addEventListener('click', closePresetListOnOutsideClick);
                     }
                 }, 0);
             }
@@ -481,6 +501,33 @@
         els.forEach(el => el.classList.remove('dragging'));
     }
 
+    // 更新预设
+    async function updatePreset(presetId: string) {
+        const preset = presets.find(p => p.id === presetId);
+        if (preset) {
+            if (newPresetName.trim() && newPresetName.trim() !== preset.name) {
+                preset.name = newPresetName.trim();
+            }
+            preset.contextCount = tempContextCount;
+            preset.maxContextTokens = tempMaxContextTokens;
+            preset.temperature = tempTemperature;
+            preset.temperatureEnabled = tempTemperatureEnabled;
+            preset.systemPrompt = tempSystemPrompt;
+            preset.modelSelectionEnabled = tempModelSelectionEnabled;
+            preset.selectedModels = tempSelectedModels;
+            preset.enableMultiModel = tempEnableMultiModel;
+            preset.chatMode = tempChatMode;
+            preset.modelThinkingSettings = tempModelThinkingSettings;
+            await savePresetsToStorage();
+            presets = [...presets];
+
+            if (presetId === selectedPresetId) {
+                applySettings();
+            }
+
+            pushMsg(t('aiSidebar.modelSettings.presetUpdated'));
+        }
+    }
     // 模型拖拽开始
     function handleModelDragStart(event: DragEvent, index: number) {
         event.stopPropagation();
@@ -578,6 +625,7 @@
     function applySettings() {
         dispatch('apply', {
             contextCount: tempContextCount,
+            maxContextTokens: tempMaxContextTokens,
             temperature: tempTemperature,
             temperatureEnabled: tempTemperatureEnabled,
             systemPrompt: tempSystemPrompt,
@@ -614,36 +662,50 @@
         return keys1.every(key => settings1[key] === settings2[key]);
     }
 
-    // 更新预设
-    async function updatePreset(presetId: string) {
-        const preset = presets.find(p => p.id === presetId);
-        if (preset) {
-            // 如果名称有变更且不为空，则更新名称
-            if (newPresetName.trim() && newPresetName.trim() !== preset.name) {
-                preset.name = newPresetName.trim();
-            }
-            preset.contextCount = tempContextCount;
-            preset.temperature = tempTemperature;
-            preset.temperatureEnabled = tempTemperatureEnabled;
-            preset.systemPrompt = tempSystemPrompt;
-            preset.modelSelectionEnabled = tempModelSelectionEnabled;
-            preset.selectedModels = tempSelectedModels;
-            preset.enableMultiModel = tempEnableMultiModel;
-            preset.chatMode = tempChatMode;
-            preset.modelThinkingSettings = tempModelThinkingSettings;
-            await savePresetsToStorage();
-            // 触发响应式更新
-            presets = [...presets];
-
-            // 关闭设置面板
-            isSettingsOpen = false;
-            openPresetList();
-        }
+    // 监听设置值的变化，自动应用
+    $: if (
+        isSettingsOpen &&
+        (!editingPresetId || editingPresetId === selectedPresetId) &&
+        (tempContextCount !== appliedSettings.contextCount ||
+            tempTemperature !== appliedSettings.temperature ||
+            tempTemperatureEnabled !== appliedSettings.temperatureEnabled ||
+            tempSystemPrompt !== appliedSettings.systemPrompt ||
+            tempModelSelectionEnabled !== (appliedSettings.modelSelectionEnabled ?? false) ||
+            !areModelsEqual(tempSelectedModels, appliedSettings.selectedModels || []) ||
+            tempEnableMultiModel !== (appliedSettings.enableMultiModel ?? false) ||
+            tempChatMode !== (appliedSettings.chatMode ?? 'ask') ||
+            !areThinkingSettingsEqual(
+                tempModelThinkingSettings,
+                appliedSettings.modelThinkingSettings || {}
+            ))
+    ) {
+        applySettings();
     }
+    
+    // 计算当前是否与选中的预设不一致
+    $: isModified = (() => {
+        const targetId = editingPresetId || selectedPresetId;
+        if (!targetId) return false;
+        const preset = presets.find(p => p.id === targetId);
+        if (!preset) return false;
+        
+        return (
+            preset.contextCount !== tempContextCount ||
+            preset.temperature !== tempTemperature ||
+            (preset.temperatureEnabled ?? true) !== tempTemperatureEnabled ||
+            preset.systemPrompt !== tempSystemPrompt ||
+            (preset.modelSelectionEnabled ?? false) !== tempModelSelectionEnabled ||
+            !areModelsEqual(preset.selectedModels || [], tempSelectedModels) ||
+            (preset.enableMultiModel ?? false) !== tempEnableMultiModel ||
+            (preset.chatMode || 'ask') !== tempChatMode ||
+            !areThinkingSettingsEqual(preset.modelThinkingSettings || {}, tempModelThinkingSettings)
+        );
+    })();
 
     // 重置临时值为当前应用的设置
     async function resetToAppliedSettings() {
         tempContextCount = appliedSettings.contextCount;
+        tempMaxContextTokens = appliedSettings.maxContextTokens ?? 16384;
         tempTemperature = appliedSettings.temperature;
         tempTemperatureEnabled = appliedSettings.temperatureEnabled ?? true;
         tempSystemPrompt = appliedSettings.systemPrompt;
@@ -698,86 +760,89 @@
         tempModelThinkingSettings = {};
         editingPresetId = '';
         selectedPresetId = '';
-        newPresetName = ''; // 重置预设名称为空
+        newPresetName = '新预设';
         await saveSelectedPresetId('');
+    }
+    // 关闭设置下拉菜单
+    function closeSettingsOnOutsideClick(event: MouseEvent) {
+        const target = event.target as HTMLElement;
+        if (
+            !target.closest('.model-settings-preset-btn') &&
+            !target.closest('.model-settings-dropdown')
+        ) {
+            isSettingsOpen = false;
+            editingPresetId = '';
+            document.removeEventListener('click', closeSettingsOnOutsideClick);
+        }
+    }
+
+    // 打开设置面板
+    async function openSettingsPanel() {
+        await resetToAppliedSettings();
+        isPresetListOpen = false;
+        isSettingsOpen = true;
+        editingPresetId = '';
+        updateSettingsPosition();
+        setTimeout(() => {
+            document.addEventListener('click', closeSettingsOnOutsideClick);
+        }, 0);
+    }
+
+    async function openNewPresetPanel() {
+        await resetToDefaults();
+        isPresetListOpen = false;
+        isSettingsOpen = true;
+        editingPresetId = '';
+        updateSettingsPosition();
+        setTimeout(() => {
+            document.addEventListener('click', closeSettingsOnOutsideClick);
+        }, 0);
     }
 
     // 打开预设列表
     async function openPresetList() {
+        isPresetListOpen = true;
+        isSettingsOpen = false;
         await loadPresets();
         await resetToAppliedSettings();
-        isPresetListOpen = true;
         updatePresetListPosition();
         setTimeout(() => {
-            document.addEventListener('click', closeOnOutsideClick);
+            document.addEventListener('click', closePresetListOnOutsideClick);
         }, 0);
     }
 
-    // 打开设置面板
-    function openSettings() {
-        isSettingsOpen = true;
-        updateSettingsPosition();
+    // 关闭预设列表
+    function closePresetListOnOutsideClick(event: MouseEvent) {
+        const target = event.target as HTMLElement;
+        if (
+            !target.closest('.model-settings-preset-btn') &&
+            !target.closest('.model-settings-preset-list-popup')
+        ) {
+            isPresetListOpen = false;
+            document.removeEventListener('click', closePresetListOnOutsideClick);
+        }
     }
 
-    // 关闭所有弹窗
-    function closeAll() {
-        isPresetListOpen = false;
-        isSettingsOpen = false;
-        document.removeEventListener('click', closeOnOutsideClick);
-    }
-
-    // 计算预设列表位置
-    async function updatePresetListPosition() {
-        if (!buttonElement || !isPresetListOpen) return;
-
-        await tick();
-
-        const rect = buttonElement.getBoundingClientRect();
-        const dropdownWidth = presetListElement?.offsetWidth || 320;
-        const dropdownHeight = presetListElement?.offsetHeight || 400;
-
-        // 计算垂直位置
-        const spaceAbove = rect.top;
-        const spaceBelow = window.innerHeight - rect.bottom;
-
-        if (spaceAbove >= dropdownHeight || spaceAbove >= spaceBelow) {
-            presetListTop = rect.top - dropdownHeight - 4;
+    // 打开/关闭预设列表
+    function togglePresetList() {
+        if (!isPresetListOpen) {
+            openPresetList();
         } else {
-            presetListTop = rect.bottom + 4;
-        }
-
-        // 计算水平位置
-        // 如果按钮右侧空间不足以放下弹窗，则右对齐；否则左对齐
-        if (rect.left + dropdownWidth > window.innerWidth - 8) {
-            // 右对齐：弹窗右边缘与按钮右边缘对齐
-            presetListLeft = rect.right - dropdownWidth;
-        } else {
-            // 左对齐：弹窗左边缘与按钮左边缘对齐
-            presetListLeft = rect.left;
-        }
-
-        // 确保不超出视口右边界
-        if (presetListLeft + dropdownWidth > window.innerWidth - 8) {
-            presetListLeft = window.innerWidth - dropdownWidth - 8;
-        }
-
-        // 确保不超出视口左边界
-        if (presetListLeft < 8) {
-            presetListLeft = 8;
+            isPresetListOpen = false;
+            document.removeEventListener('click', closePresetListOnOutsideClick);
         }
     }
 
-    // 计算设置面板位置
+    // 计算设置下拉菜单位置
     async function updateSettingsPosition() {
-        if (!buttonElement || !isSettingsOpen) return;
+        if (!presetButtonElement || !isSettingsOpen) return;
 
         await tick();
 
-        const rect = buttonElement.getBoundingClientRect();
-        const dropdownWidth = settingsElement?.offsetWidth || 360;
-        const dropdownHeight = settingsElement?.offsetHeight || 500;
+        const rect = presetButtonElement.getBoundingClientRect();
+        const dropdownWidth = settingsDropdownElement?.offsetWidth || 360;
+        const dropdownHeight = settingsDropdownElement?.offsetHeight || 400;
 
-        // 计算垂直位置
         const spaceAbove = rect.top;
         const spaceBelow = window.innerHeight - rect.bottom;
 
@@ -787,47 +852,48 @@
             settingsTop = rect.bottom + 4;
         }
 
-        // 计算水平位置
-        // 如果按钮右侧空间不足以放下弹窗，则右对齐；否则左对齐
-        if (rect.left + dropdownWidth > window.innerWidth - 8) {
-            // 右对齐：弹窗右边缘与按钮右边缘对齐
-            settingsLeft = rect.right - dropdownWidth;
-        } else {
-            // 左对齐：弹窗左边缘与按钮左边缘对齐
-            settingsLeft = rect.left;
-        }
+        settingsLeft = rect.left;
 
-        // 确保不超出视口右边界
         if (settingsLeft + dropdownWidth > window.innerWidth - 8) {
             settingsLeft = window.innerWidth - dropdownWidth - 8;
         }
 
-        // 确保不超出视口左边界
         if (settingsLeft < 8) {
             settingsLeft = 8;
         }
     }
 
-    // 关闭下拉菜单
-    function closeOnOutsideClick(event: MouseEvent) {
-        const target = event.target as HTMLElement;
-        if (!target.closest('.model-settings-button')) {
-            isPresetListOpen = false;
-            isSettingsOpen = false;
-            document.removeEventListener('click', closeOnOutsideClick);
-        }
-    }
+    // 计算预设列表下拉菜单位置
+    async function updatePresetListPosition() {
+        if (!presetButtonElement || !isPresetListOpen) return;
 
-    // 打开/关闭弹窗
-    function toggleDropdown() {
-        if (!isPresetListOpen && !isSettingsOpen) {
-            openPresetList();
+        await tick();
+
+        const rect = presetButtonElement.getBoundingClientRect();
+        const dropdownWidth = presetDropdownElement?.offsetWidth || 360;
+        const dropdownHeight = presetDropdownElement?.offsetHeight || 400;
+
+        const spaceAbove = rect.top;
+        const spaceBelow = window.innerHeight - rect.bottom;
+
+        if (spaceAbove >= dropdownHeight || spaceAbove >= spaceBelow) {
+            presetListTop = rect.top - dropdownHeight - 4;
         } else {
-            closeAll();
+            presetListTop = rect.bottom + 4;
+        }
+
+        presetListLeft = rect.left;
+
+        if (presetListLeft + dropdownWidth > window.innerWidth - 8) {
+            presetListLeft = window.innerWidth - dropdownWidth - 8;
+        }
+
+        if (presetListLeft < 8) {
+            presetListLeft = 8;
         }
     }
 
-    $: if (isPresetListOpen) {
+    $: if (isPresetListOpen && presets) {
         updatePresetListPosition();
     }
 
@@ -868,31 +934,56 @@
     $: currentPresetName = (() => {
         if (selectedPresetId) {
             const preset = presets.find(p => p.id === selectedPresetId);
-            if (preset) return preset.name;
+            return preset ? preset.name : '预设';
         }
         return '';
     })();
+
+    // 计算设置面板标题上要显示的预设名称
+    $: settingsPanelTitle = (() => {
+        const targetId = editingPresetId || selectedPresetId;
+        if (targetId) {
+            const preset = presets.find(p => p.id === targetId);
+            return preset ? preset.name : t('aiSidebar.modelSettings.title');
+        }
+        return t('aiSidebar.modelSettings.title');
+    })();
 </script>
 
-<div class="model-settings-button">
+<div class="model-settings-button-group">
+    <!-- 1. 预设切换按钮 -->
     <button
-        bind:this={buttonElement}
-        class="b3-button b3-button--text model-settings-button__trigger"
-        on:click|stopPropagation={toggleDropdown}
-        title={currentPresetName || t('aiSidebar.modelSettings.title')}
+        bind:this={presetButtonElement}
+        class="b3-button b3-button--text model-settings-preset-btn"
+        on:click|stopPropagation={togglePresetList}
+        title={t('aiSidebar.modelSettings.switchPreset') || '切换预设'}
     >
-        <svg class="b3-button__icon"><use xlink:href="#iconModelSetting"></use></svg>
-        {#if currentPresetName}
+        {#if currentPresetName !== '预设'}
             <span class="model-settings-button__label">
                 {currentPresetName}
             </span>
+        {:else}
+             <span>{t('aiSidebar.modelSettings.preset') || '预设'}</span>
         {/if}
+        <svg class="b3-button__icon b3-button__icon--small"><use xlink:href="#iconDown"></use></svg>
     </button>
+    
+    <!-- 2. 设置按钮 (已移至列表内) -->
+    <!--
+    <button
+        bind:this={settingsButtonElement}
+        class="b3-button b3-button--text model-settings-trigger-btn"
+        on:click|stopPropagation={toggleSettings}
+        title={t('aiSidebar.modelSettings.title')}
+    >
+        <svg class="b3-button__icon"><use xlink:href="#iconModelSetting"></use></svg>
+    </button>
+    -->
 
     <!-- 预设列表弹窗 -->
     {#if isPresetListOpen}
         <div
-            bind:this={presetListElement}
+            bind:this={presetDropdownElement}
             class="model-settings-preset-list-popup"
             style="top: {presetListTop}px; left: {presetListLeft}px;"
             on:click|stopPropagation
@@ -915,12 +1006,7 @@
                 <div class="model-settings-preset-list-new">
                     <button
                         class="b3-button b3-button--primary"
-                        on:click={async () => {
-                            editingPresetId = '';
-                            await resetToDefaults();
-                            isPresetListOpen = false;
-                            openSettings();
-                        }}
+                        on:click={openNewPresetPanel}
                     >
                         <svg class="b3-button__icon"><use xlink:href="#iconAdd"></use></svg>
                         {t('aiSidebar.modelSettings.createNewPreset') || '新建预设'}
@@ -1076,51 +1162,37 @@
         </div>
     {/if}
 
-    <!-- 设置面板弹窗 -->
+    <!-- 4. 详细设置面板 -->
     {#if isSettingsOpen}
         <div
-            bind:this={settingsElement}
+            bind:this={settingsDropdownElement}
             class="model-settings-dropdown"
             style="top: {settingsTop}px; left: {settingsLeft}px;"
-            on:click|stopPropagation
         >
             <div class="model-settings-header">
-                <div class="model-settings-header-left">
-                    {#if editingPresetId}
-                        <button
-                            class="b3-button b3-button--primary"
-                            on:click={() => updatePreset(editingPresetId)}
-                        >
-                            {t('aiSidebar.modelSettings.savePreset') || '保存预设'}
-                        </button>
-                    {:else}
-                        <button class="b3-button b3-button--primary" on:click={saveAsPreset}>
-                            {t('aiSidebar.modelSettings.savePreset') || '保存预设'}
-                        </button>
-                    {/if}
-                </div>
                 <h4>
-                    {editingPresetId
-                        ? t('aiSidebar.modelSettings.editPreset') || '编辑预设'
-                        : t('aiSidebar.modelSettings.createNewPreset') || '新建预设'}
+                    {#if editingPresetId || selectedPresetId}
+                        {settingsPanelTitle} {isModified ? '*' : ''}
+                    {:else}
+                        {t('aiSidebar.modelSettings.title')}
+                    {/if}
                 </h4>
                 <div class="model-settings-header-actions">
+                    <!-- 如果有修改，显示更新按钮 -->
+                    {#if (editingPresetId || selectedPresetId) && isModified}
+                        <button 
+                            class="b3-button b3-button--small b3-button--text"
+                            on:click={() => updatePreset(editingPresetId || selectedPresetId)}
+                            title={t('aiSidebar.modelSettings.updatePreset') || '更新预设'}
+                        >
+                             <svg class="b3-button__icon"><use xlink:href="#iconRefresh"></use></svg>
+                             {t('aiSidebar.modelSettings.save') || '保存'}
+                        </button>
+                    {/if}
+
                     <button
                         class="b3-button b3-button--text"
-                        on:click={() => {
-                            isSettingsOpen = false;
-                            openPresetList();
-                        }}
-                        title={t('common.back') || '返回'}
-                    >
-                        <svg class="b3-button__icon"><use xlink:href="#iconBack"></use></svg>
-                    </button>
-                    <button
-                        class="b3-button b3-button--text"
-                        on:click={() => {
-                            isSettingsOpen = false;
-                            openPresetList();
-                        }}
+                        on:click={backToPresetList}
                         title={t('common.close')}
                     >
                         <svg class="b3-button__icon"><use xlink:href="#iconClose"></use></svg>
@@ -1154,7 +1226,7 @@
                     <input
                         type="range"
                         min="1"
-                        max="50"
+                        max="200"
                         step="1"
                         bind:value={tempContextCount}
                         on:change={applySettings}
@@ -1162,6 +1234,25 @@
                     />
                     <div class="model-settings-hint">
                         {t('aiSidebar.modelSettings.contextCountHint')}
+                    </div>
+                </div>
+
+                <!-- Max Context Tokens Setting -->
+                <div class="model-settings-item">
+                    <label class="model-settings-label">
+                        {t('aiSidebar.modelSettings.maxContextTokens') || 'Max Tokens'}
+                        <span class="model-settings-value">{tempMaxContextTokens}</span>
+                    </label>
+                    <input
+                        type="range"
+                        min="1024"
+                        max="200000"
+                        step="1024"
+                        bind:value={tempMaxContextTokens}
+                        class="b3-slider"
+                    />
+                    <div class="model-settings-hint">
+                        {t('aiSidebar.modelSettings.maxContextTokensHint') || 'Limit context by token count (approximate)'}
                     </div>
                 </div>
 
@@ -1502,6 +1593,28 @@
                             '启用后，应用预设时会自动切换到选择的模型'}
                     </div>
                 </div>
+
+                <!-- 保存为新预设 -->
+                <div class="model-settings-item">
+                    <label class="model-settings-label">
+                        {t('aiSidebar.modelSettings.saveAsPreset') || '保存为新预设'}
+                    </label>
+                    <div class="model-settings-save-preset">
+                        <input
+                            type="text"
+                            bind:value={newPresetName}
+                            class="b3-text-field"
+                            placeholder={t('aiSidebar.modelSettings.presetName')}
+                            on:keydown={e => e.key === 'Enter' && saveAsPreset()}
+                        />
+                        <button
+                            class="b3-button b3-button--primary"
+                            on:click={saveAsPreset}
+                        >
+                            {t('aiSidebar.modelSettings.save') || '保存'}
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <div class="model-settings-footer">
@@ -1514,16 +1627,32 @@
 </div>
 
 <style lang="scss">
-    .model-settings-button {
+    .model-settings-button-group {
+        display: flex;
+        align-items: center;
+        gap: 2px;
         position: relative;
     }
 
-    .model-settings-button__trigger {
+    .model-settings-preset-btn {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        max-width: 200px;
+        max-width: 160px;
         padding-inline: 6px 8px;
+        
+        span {
+             max-width: 120px;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             white-space: nowrap;
+        }
+        
+        .b3-button__icon--small {
+            width: 10px;
+            height: 10px;
+            opacity: 0.8;
+        }
     }
 
     .model-settings-button__label {
@@ -1715,6 +1844,20 @@
         flex-direction: column;
         z-index: 1000;
     }
+    
+    .model-settings-preset-dropdown {
+        position: fixed;
+        background: var(--b3-theme-background);
+        border: 1px solid var(--b3-border-color);
+        border-radius: 6px;
+        box-shadow: var(--b3-dialog-shadow);
+        width: 280px;
+        max-height: 400px;
+        display: flex;
+        flex-direction: column;
+        z-index: 1000;
+        padding: 8px;
+    }
 
     .model-settings-header {
         display: flex;
@@ -1834,6 +1977,17 @@
         font-size: 12px;
     }
 
+    .model-settings-preset-details {
+        font-size: 11px;
+        color: var(--b3-theme-on-surface-light);
+    }
+    
+    .model-settings-preset-selected-icon {
+        width: 14px;
+        height: 14px;
+        flex-shrink: 0;
+        color: var(--b3-theme-primary);
+    }
     .model-settings-footer {
         display: flex;
         align-items: center;

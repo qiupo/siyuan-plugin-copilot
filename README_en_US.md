@@ -1,5 +1,13 @@
 SiYuan Notes AI Assistant Plugin, which enables rich functionalities such as Q&A and editing based on the content of SiYuan Notes.
 
+> [!NOTE]
+> **New Feature: Model Context Protocol (MCP) Support**
+>
+> This branch introduces support for the **Model Context Protocol (MCP)**, allowing seamless integration with external tools and data.
+> - **Server Management**: Configure and manage custom MCP servers (stdio, SSE) directly within the plugin settings.
+> - **Tool Integration**: Tools exposed by connected MCP servers are automatically available for use in Agent mode, extending the AI's capabilities.
+>- **preset modification**: preset selection and editing mode change, which can directly switch the preset without switching from setting.
+
 **Note**: Using this plugin requires you to prepare your own API keys from AI platforms. The plugin itself does not provide AI services. Please comply with the terms of use and privacy policies of each platform.
 
 > For friends who need to use top-tier models like GPT-5, Gemini 2.5 Pro, Claude 4.5, etc.
