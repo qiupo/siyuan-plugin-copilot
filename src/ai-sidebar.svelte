@@ -2404,24 +2404,15 @@
             }
         }
 
-        // 添加系统提示词
-        if (chatMode === 'edit') {
-            if (settings.aiSystemPrompt) {
-                messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
-            }
-            messagesToSend.unshift({ role: 'system', content: editModePrompt });
-        } else if (settings.aiSystemPrompt) {
-            messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
-        }
-
-        // 使用临时系统提示词（如果设置了）
-        if (tempModelSettings.systemPrompt.trim()) {
-            // 如果已有系统提示词，替换它；否则添加新的
-            const systemMsgIndex = messagesToSend.findIndex(msg => msg.role === 'system');
-            if (systemMsgIndex !== -1) {
-                messagesToSend[systemMsgIndex].content = tempModelSettings.systemPrompt;
-            } else {
+        // 添加系统提示词（确保不重复添加）
+        const hasSystemPrompt = messagesToSend.some(msg => msg.role === 'system');
+        if (!hasSystemPrompt) {
+            if (tempModelSettings.systemPrompt.trim()) {
                 messagesToSend.unshift({ role: 'system', content: tempModelSettings.systemPrompt });
+            } else if (chatMode === 'edit') {
+                messagesToSend.unshift({ role: 'system', content: editModePrompt });
+            } else if (settings.aiSystemPrompt) {
+                messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
             }
         }
 
@@ -3089,26 +3080,15 @@
             }
         }
 
-        // 根据模式添加系统提示词
-        if (chatMode === 'edit') {
-            // 先添加用户的系统提示词（如果有）
-            if (settings.aiSystemPrompt) {
-                messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
-            }
-            // 再添加编辑模式的提示词
-            messagesToSend.unshift({ role: 'system', content: editModePrompt });
-        } else if (settings.aiSystemPrompt) {
-            messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
-        }
-
-        // 使用临时系统提示词（如果设置了）
-        if (tempModelSettings.systemPrompt.trim()) {
-            // 如果已有系统提示词，替换它；否则添加新的
-            const systemMsgIndex = messagesToSend.findIndex(msg => msg.role === 'system');
-            if (systemMsgIndex !== -1) {
-                messagesToSend[systemMsgIndex].content = tempModelSettings.systemPrompt;
-            } else {
+        // 根据模式添加系统提示词（确保不重复添加）
+        const hasSystemPrompt = messagesToSend.some(msg => msg.role === 'system');
+        if (!hasSystemPrompt) {
+            if (tempModelSettings.systemPrompt.trim()) {
                 messagesToSend.unshift({ role: 'system', content: tempModelSettings.systemPrompt });
+            } else if (chatMode === 'edit') {
+                messagesToSend.unshift({ role: 'system', content: editModePrompt });
+            } else if (settings.aiSystemPrompt) {
+                messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
             }
         }
 
