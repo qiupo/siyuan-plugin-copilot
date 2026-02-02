@@ -7315,7 +7315,9 @@
             lastUserMessage
         );
 
-        if (settings.aiSystemPrompt) {
+        // 检查是否已有系统提示词，避免重复添加
+        const hasSystemPrompt = messagesToSend.some(msg => msg.role === 'system');
+        if (!hasSystemPrompt && settings.aiSystemPrompt) {
             messagesToSend.unshift({ role: 'system', content: settings.aiSystemPrompt });
         }
 

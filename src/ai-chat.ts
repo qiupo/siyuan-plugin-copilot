@@ -1337,8 +1337,10 @@ export function isImageGenerationSupported(provider: string, modelId: string): b
  * @returns 截断后的消息列表
  */
 export function limitMessagesByTokens(messages: Message[], maxTokens: number): Message[] {
-    // 始终保留 system 消息
-    const systemMessages = messages.filter(msg => msg.role === 'system');
+    // 始终保留最新的 system 消息
+    const allSystemMessages = messages.filter(msg => msg.role === 'system');
+    // 如果有多个 system 消息，只保留最后一个，避免重复
+    const systemMessages = allSystemMessages.length > 0 ? [allSystemMessages[allSystemMessages.length - 1]] : [];
     const systemTokens = calculateTotalTokens(systemMessages);
     
     let remainingTokens = maxTokens - systemTokens;
