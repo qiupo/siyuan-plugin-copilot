@@ -8,7 +8,7 @@
     export let currentProvider = '';
     export let currentModelId = '';
     export let appliedSettings = {
-        contextCount: 10,
+        contextCount: 50,
         maxContextTokens: 16384,
         temperature: 0.7,
         temperatureEnabled: true,
@@ -36,7 +36,7 @@
     let presetDropdownElement: HTMLDivElement;
 
     // 模型设置（临时值，用于编辑）
-    let tempContextCount = 10;
+    let tempContextCount = 50;
     let tempMaxContextTokens = 16384; // 最大上下文Token数
     let tempTemperature = 0.7;
     let tempTemperatureEnabled = false;
@@ -339,7 +339,7 @@
 
         const preset = presets.find(p => p.id === presetId);
         if (preset) {
-            tempContextCount = preset.contextCount;
+            tempContextCount = preset.contextCount ?? 50;
             tempMaxContextTokens = preset.maxContextTokens ?? 16384;
             tempTemperature = preset.temperature;
             tempTemperatureEnabled = preset.temperatureEnabled ?? true;
@@ -371,7 +371,7 @@
 
         editingPresetId = presetId;
         newPresetName = preset.name;
-        tempContextCount = preset.contextCount;
+        tempContextCount = preset.contextCount ?? 50;
         tempMaxContextTokens = preset.maxContextTokens ?? 16384;
         tempTemperature = preset.temperature;
         tempTemperatureEnabled = preset.temperatureEnabled ?? true;
@@ -710,7 +710,7 @@
 
     // 重置临时值为当前应用的设置
     async function resetToAppliedSettings() {
-        tempContextCount = appliedSettings.contextCount;
+        tempContextCount = appliedSettings.contextCount ?? 50;
         tempMaxContextTokens = appliedSettings.maxContextTokens ?? 16384;
         tempTemperature = appliedSettings.temperature;
         tempTemperatureEnabled = appliedSettings.temperatureEnabled ?? true;
@@ -764,7 +764,7 @@
 
     function initTempVarsToDefaults() {
         const modelConfig = getCurrentModelConfig();
-        tempContextCount = 10;
+        tempContextCount = 50;
         tempTemperature = modelConfig?.temperature ?? 0.7;
         tempTemperatureEnabled = true;
         tempSystemPrompt = '';
@@ -1246,7 +1246,7 @@
                     <input
                         type="range"
                         min="1"
-                        max="200"
+                        max="1000"
                         step="1"
                         bind:value={tempContextCount}
                         on:change={applySettings}

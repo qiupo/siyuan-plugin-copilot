@@ -154,7 +154,7 @@
 
     // 模型临时设置
     let tempModelSettings = {
-        contextCount: 10,
+        contextCount: 50,
         maxContextTokens: 16384,
         temperature: 0.7,
         temperatureEnabled: true,
@@ -2438,6 +2438,7 @@
         // 2. 再基于消息数量限制（如果用户设置了较小的 count，仍然生效）
         // 注意：由于 maxContextTokens 默认值可能较大，如果不限制 count，可能会包含过多消息
         // 但如果用户想要利用大窗口（如200k），他们会调大 contextCount
+        // UPDATE: 默认值已调整为 50，且最大值支持到 1000，以避免默认值过小导致上下文丢失
         const limitedMessages = otherMessages.slice(-tempModelSettings.contextCount);
 
         // 建立 tool_call_id => tool 消息的索引，便于补全被截断的链条
