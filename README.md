@@ -36,7 +36,8 @@
 - 支持独立配置每个模型的参数（温度、最大 tokens）
 - 标识模型特殊能力（思考模式、视觉支持）
 
-<img alt="image" src="https://assets.b3logfile.com/siyuan/1610205759005/assets/image-20260118224932-h84zc74.png" />
+<img alt="image" src="https://assets.b3logfile.com/siyuan/1610205759005/assets/image-20260204180535-27ex0wd.png" />
+
 
 <img alt="image" src="https://assets.b3logfile.com/siyuan/1610205759005/assets/image-20260118225029-2f5k1mt.png" />
 
