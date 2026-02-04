@@ -10406,6 +10406,7 @@
         align-items: center;
         gap: 8px;
         padding: 4px 0;
+        flex-wrap: wrap;
     }
 
     .ai-sidebar__mode-label {
@@ -10520,6 +10521,7 @@
         align-items: center;
         gap: 6px;
         margin-top: 2px;
+        flex-wrap: wrap;
     }
 
     .ai-sidebar__upload-btn,
