@@ -282,11 +282,11 @@ const PROVIDER_CONFIGS: Record<AIProvider, ProviderConfig> = {
     },
     aapi: {
         name: 'AAPI',
-        baseUrl: 'https://api.achuan-2.top',
+        baseUrl: 'https://gpt.achuan-2.top',
         modelsEndpoint: '/v1/models',
         chatEndpoint: '/v1/chat/completions',
         apiKeyHeader: 'Authorization',
-        websiteUrl: 'https://api.achuan-2.top/register?aff=fQIZ'
+        websiteUrl: 'https://gpt.achuan-2.top/register?aff=ZndO'
     },
     custom: {
         name: 'Custom',

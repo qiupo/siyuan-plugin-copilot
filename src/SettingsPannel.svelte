@@ -37,7 +37,7 @@
         moonshot: 'https://api.moonshot.cn',
         openai: 'https://api.openai.com',
         volcano: 'https://ark.cn-beijing.volces.com',
-        aapi: 'https://api.achuan-2.top/',
+        aapi: 'https://gpt.achuan-2.top/',
     };
 
     // 内置平台的官网链接
@@ -47,7 +47,7 @@
         moonshot: 'https://platform.moonshot.cn/',
         openai: 'https://platform.openai.com/',
         volcano: 'https://console.volcengine.com/ark',
-        aapi: 'https://api.achuan-2.top/register?aff=fQIZ',
+        aapi: 'https://gpt.achuan-2.top/register?aff=ZndO',
     };
 
     // 当前选中的平台ID
