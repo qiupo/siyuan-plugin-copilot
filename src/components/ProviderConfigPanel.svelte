@@ -352,6 +352,20 @@
                     <div class="provider-description">
                         {t('platform.builtIn.AchuanDescription')}
                     </div>
+                    <div style="margin-top:6px;">
+                        <a
+                            href="https://achuan-2.apifox.cn/doc-8155570"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="platform-link"
+                            title="Achuan API 使用帮助"
+                        >
+                            <svg class="b3-button__icon">
+                                <use xlink:href="#iconHelp"></use>
+                            </svg>
+                            <span>帮助指南</span>
+                        </a>
+                    </div>
                 {/if}
             </div>
             {#if isCustomProvider}
