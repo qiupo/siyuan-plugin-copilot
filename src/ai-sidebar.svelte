@@ -10,6 +10,7 @@
         type ThinkingEffort,
         isSupportedThinkingGeminiModel,
         isSupportedThinkingClaudeModel,
+        isGemini3Model,
     } from './ai-chat';
     import type { MessageContent } from './ai-chat';
     import { getActiveEditor } from 'siyuan';
@@ -151,7 +152,7 @@
     // 模型临时设置
     let tempModelSettings = {
         contextCount: 10,
-        temperature: 0.7,
+        temperature: 1,
         temperatureEnabled: true,
         systemPrompt: '',
         modelSelectionEnabled: false,
@@ -966,7 +967,7 @@
                         {
                             id: settings.aiModel,
                             name: settings.aiModel,
-                            temperature: settings.aiTemperature || 0.7,
+                            temperature: settings.aiTemperature || 1,
                             maxTokens: settings.aiMaxTokens || -1,
                         },
                     ];
@@ -1515,6 +1516,11 @@
     // 当前模型是否是 Gemini 模型（用于决定是否显示"默认"选项）
     $: isCurrentModelGemini = currentModelId
         ? isSupportedThinkingGeminiModel(currentModelId)
+        : false;
+
+    // 当前模型是否是 Gemini 3 系列（用于限制思考程度选项）
+    $: isCurrentModelGemini3 = currentModelId
+        ? isGemini3Model(currentModelId)
         : false;
 
     // 当前思考程度设置
@@ -9639,7 +9645,9 @@
                                         <option value="auto">{t('thinking.effort.auto')}</option>
                                     {/if}
                                     <option value="low">{t('thinking.effort.low')}</option>
-                                    <option value="medium">{t('thinking.effort.medium')}</option>
+                                    {#if !isCurrentModelGemini3}
+                                        <option value="medium">{t('thinking.effort.medium')}</option>
+                                    {/if}
                                     <option value="high">{t('thinking.effort.high')}</option>
                                 </select>
                             {/if}
@@ -9684,7 +9692,9 @@
                                         <option value="auto">{t('thinking.effort.auto')}</option>
                                     {/if}
                                     <option value="low">{t('thinking.effort.low')}</option>
-                                    <option value="medium">{t('thinking.effort.medium')}</option>
+                                    {#if !isCurrentModelGemini3}
+                                        <option value="medium">{t('thinking.effort.medium')}</option>
+                                    {/if}
                                     <option value="high">{t('thinking.effort.high')}</option>
                                 </select>
                             {/if}

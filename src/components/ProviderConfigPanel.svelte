@@ -206,7 +206,7 @@
         const newModel: ModelConfig = {
             id: modelId,
             name: modelName,
-            temperature: 0.7,
+            temperature: 1,
             maxTokens: -1,
         };
 

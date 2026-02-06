@@ -10,7 +10,7 @@
     export let currentModelId = '';
     export let appliedSettings = {
         contextCount: 10,
-        temperature: 0.7,
+        temperature: 1,
         temperatureEnabled: true,
         systemPrompt: '',
         modelSelectionEnabled: false,
@@ -38,7 +38,7 @@
 
     // 模型设置（临时值，用于编辑）
     let tempContextCount = 10;
-    let tempTemperature = 0.7;
+    let tempTemperature = 1;
     let tempTemperatureEnabled = false;
     let tempSystemPrompt = '';
     let tempModelSelectionEnabled = false;
@@ -85,7 +85,7 @@
     let initialState = {
         presetName: '',
         contextCount: 10,
-        temperature: 0.7,
+        temperature: 1,
         temperatureEnabled: true,
         systemPrompt: '',
         modelSelectionEnabled: false,
@@ -559,7 +559,7 @@
     async function resetToDefaults() {
         const modelConfig = getCurrentModelConfig();
         tempContextCount = 10;
-        tempTemperature = modelConfig?.temperature ?? 0.7;
+        tempTemperature = modelConfig?.temperature ?? 1;
         tempTemperatureEnabled = true;
         tempSystemPrompt = '';
         tempModelSelectionEnabled = false;

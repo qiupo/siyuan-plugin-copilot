@@ -512,7 +512,7 @@ async function chatOpenAIFormat(
     const requestBody: any = {
         model: options.model,
         messages: formattedMessages,
-        temperature: options.temperature || 0.7,
+        temperature: options.temperature || 1,
         max_tokens: options.maxTokens,
         stream: options.stream !== false,
         ...options.customBody // 合并自定义参数
@@ -558,7 +558,12 @@ async function chatOpenAIFormat(
             // Gemini 3 系列使用 reasoning_effort 参数
             // https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#openai_compatibility
             if (isGemini3Model(options.model)) {
-                requestBody.reasoning_effort = reasoningEffort === 'auto' ? 'low' : reasoningEffort;
+                // Gemini 3 只支持 low 和 high，将 medium 和 auto 映射到 low
+                let mappedEffort: 'low' | 'high' = 'low';
+                if (reasoningEffort === 'high') {
+                    mappedEffort = 'high';
+                }
+                requestBody.reasoning_effort = mappedEffort;
             } else {
                 // Gemini 2.5 等使用 google.thinking_config
                 // 根据 reasoningEffort 计算 thinkingBudget
@@ -735,7 +740,7 @@ async function chatGeminiFormat(
     const requestBody: any = {
         contents,
         generationConfig: {
-            temperature: options.temperature || 0.7,
+            temperature: options.temperature || 1,
             maxOutputTokens: options.maxTokens
         },
         ...options.customBody // 合并自定义参数

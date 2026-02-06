@@ -120,6 +120,6 @@ export const getDefaultSettings = () => ({
     aiApiKey: '',
     aiModel: '',
     aiCustomApiUrl: '',
-    aiTemperature: 0.7,
+    aiTemperature: 1,
     aiMaxTokens: 2000,
 });
