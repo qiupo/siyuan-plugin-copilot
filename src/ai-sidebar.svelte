@@ -156,7 +156,12 @@
         temperatureEnabled: true,
         systemPrompt: '',
         modelSelectionEnabled: false,
-        selectedModels: [] as Array<{ provider: string; modelId: string; thinkingEnabled?: boolean; thinkingEffort?: ThinkingEffort }>,
+        selectedModels: [] as Array<{
+            provider: string;
+            modelId: string;
+            thinkingEnabled?: boolean;
+            thinkingEffort?: ThinkingEffort;
+        }>,
         enableMultiModel: false,
         chatMode: 'ask' as 'ask' | 'edit' | 'agent',
     };
@@ -750,7 +755,12 @@
 
     // 多模型对话
     let enableMultiModel = false; // 是否启用多模型模式
-    let selectedMultiModels: Array<{ provider: string; modelId: string; thinkingEnabled?: boolean; thinkingEffort?: ThinkingEffort }> = []; // 选中的多个模型
+    let selectedMultiModels: Array<{
+        provider: string;
+        modelId: string;
+        thinkingEnabled?: boolean;
+        thinkingEffort?: ThinkingEffort;
+    }> = []; // 选中的多个模型
     let multiModelResponses: Array<{
         provider: string;
         modelId: string;
@@ -1306,7 +1316,13 @@
             temperatureEnabled: boolean;
             systemPrompt: string;
             modelSelectionEnabled?: boolean;
-            selectedModels?: Array<{ provider: string; modelId: string; thinkingEnabled?: boolean; thinkingEffort?: ThinkingEffort }>;            enableMultiModel?: boolean;
+            selectedModels?: Array<{
+                provider: string;
+                modelId: string;
+                thinkingEnabled?: boolean;
+                thinkingEffort?: ThinkingEffort;
+            }>;
+            enableMultiModel?: boolean;
             chatMode?: 'ask' | 'edit' | 'agent';
         }>
     ) {
@@ -1842,7 +1858,8 @@
                 isLoading: true,
                 thinkingCollapsed: false,
                 // 使用模型实例的 thinkingEnabled 值，如果没有则使用 modelConfig 中的默认值
-                thinkingEnabled: model.thinkingEnabled ?? config?.modelConfig?.thinkingEnabled ?? false,
+                thinkingEnabled:
+                    model.thinkingEnabled ?? config?.modelConfig?.thinkingEnabled ?? false,
             };
         });
 
@@ -1896,7 +1913,8 @@
                             modelConfig.capabilities?.thinking &&
                             (model.thinkingEnabled ?? modelConfig.thinkingEnabled ?? false),
                         // 使用模型实例的 thinkingEffort 值，如果没有则使用 modelConfig 中的默认值
-                        reasoningEffort: model.thinkingEffort ?? modelConfig.thinkingEffort ?? 'low',
+                        reasoningEffort:
+                            model.thinkingEffort ?? modelConfig.thinkingEffort ?? 'low',
                         customBody, // 传递自定义参数
                         onThinkingChunk: async (chunk: string) => {
                             thinking += chunk;
