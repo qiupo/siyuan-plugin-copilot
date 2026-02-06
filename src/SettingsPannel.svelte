@@ -273,6 +273,17 @@
                         step: 1,
                     },
                 },
+                {
+                    key: 'multiModelViewMode',
+                    value: settings.multiModelViewMode,
+                    type: 'select',
+                    title: t('settings.multiModelViewMode.title'),
+                    description: t('settings.multiModelViewMode.description'),
+                    options: {
+                        tab: t('settings.multiModelViewMode.options.tab'),
+                        card: t('settings.multiModelViewMode.options.card'),
+                    },
+                },
             ],
         },
         {

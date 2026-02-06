@@ -146,6 +146,7 @@
 
     // 显示设置
     let messageFontSize = 12;
+    let multiModelViewMode: 'tab' | 'card' = 'tab'; // 多模型回答样式
 
     // 模型临时设置
     let tempModelSettings = {
@@ -762,7 +763,7 @@
     }> = []; // 多模型响应
     let isWaitingForAnswerSelection = false; // 是否在等待用户选择答案
     let selectedAnswerIndex: number | null = null; // 用户选择的答案索引
-    let multiModelLayout: 'card' | 'tab' = 'tab'; // 多模型布局模式：card 或 tab
+    let multiModelLayout: 'card' | 'tab' = 'tab'; // 多模型布局模式：card 或 tab（会在初始化时从设置读取）
     let selectedTabIndex: number = 0; // 当前选中的页签索引
 
     // 保存到笔记相关
@@ -819,6 +820,10 @@
 
         // 初始化字体大小设置
         messageFontSize = settings.messageFontSize || 12;
+
+        // 初始化多模型视图样式设置
+        multiModelViewMode = settings.multiModelViewMode || 'tab';
+        multiModelLayout = multiModelViewMode; // 同时初始化多模型布局
 
         // 加载历史会话
         await loadSessions();
@@ -884,7 +889,15 @@
                 // 实时更新字体大小设置
                 if (newSettings.messageFontSize !== undefined) {
                     messageFontSize = newSettings.messageFontSize;
-                } // 更新系统提示词
+                }
+                
+                // 实时更新多模型视图样式设置
+                if (newSettings.multiModelViewMode !== undefined) {
+                    multiModelViewMode = newSettings.multiModelViewMode;
+                    multiModelLayout = newSettings.multiModelViewMode; // 同步更新多模型布局
+                }
+                
+                // 更新系统提示词
                 if (settings.aiSystemPrompt && messages.length === 0) {
                     messages = [{ role: 'system', content: settings.aiSystemPrompt }];
                 } else if (settings.aiSystemPrompt && messages[0]?.role === 'system') {
@@ -2422,8 +2435,8 @@
         const selectedResponse = multiModelResponses[index];
         if (!selectedResponse || selectedResponse.isLoading) return;
 
-        // 设置布局为页签样式
-        multiModelLayout = 'tab';
+        // 不再强制重置布局，保持用户选择的布局样式
+        // multiModelLayout = 'tab';
 
         // 【修复】更新已存在的助手消息，而不是创建新消息
         const lastMessage = messages[messages.length - 1];
@@ -8364,7 +8377,7 @@
                         <!-- 显示多模型响应（历史消息） - 仅在用户已选择答案后显示 -->
                         {#if message.role === 'assistant' && message.multiModelResponses && message.multiModelResponses.length > 0 && message.multiModelResponses.some(r => r.isSelected)}
                             {@const layoutKey = `history_layout_${messageIndex}_${msgIndex}`}
-                            {@const currentLayout = thinkingCollapsed[layoutKey] || 'tab'}
+                            {@const currentLayout = thinkingCollapsed[layoutKey] || multiModelViewMode}
                             <div class="ai-message__multi-model-responses">
                                 <div class="ai-message__multi-model-header">
                                     <div class="ai-message__multi-model-header-top">

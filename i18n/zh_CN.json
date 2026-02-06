@@ -68,6 +68,14 @@
             "title": "消息字体大小",
             "description": "调整消息内容的字体大小（默认12px）"
         },
+        "multiModelViewMode": {
+            "title": "多模型回答样式",
+            "description": "选择多模型回答的默认显示方式",
+            "options": {
+                "tab": "页签视图",
+                "card": "卡片视图"
+            }
+        },
         "exportNotebook": {
             "title": "导出笔记本",
             "description": "选择保存会话的默认笔记本",

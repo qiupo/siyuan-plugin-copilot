@@ -82,6 +82,7 @@ export const getDefaultSettings = () => ({
 
     // 显示设置
     messageFontSize: 14 as number, // 消息字体大小
+    multiModelViewMode: 'tab' as 'tab' | 'card', // 多模型回答样式：tab (页签视图) | card (卡片视图)
 
     // 多模型设置
     selectedMultiModels: [] as Array<{ provider: string; modelId: string }>, // 选中的多模型列表
