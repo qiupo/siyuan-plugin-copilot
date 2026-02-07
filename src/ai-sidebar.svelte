@@ -2663,13 +2663,13 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                             },
                         ];
                     } else if (modelIdLower.includes('claude')) {
-                        webSearchTools = [
-                            {
-                                type: 'web_search_20250305',
-                                name: 'web_search',
-                                max_uses: modelConfig.webSearchMaxUses || 5,
-                            },
-                        ];
+                        // webSearchTools = [
+                        //     {
+                        //         type: 'web_search_20250305',
+                        //         name: 'web_search',
+                        //         max_uses: modelConfig.webSearchMaxUses || 5,
+                        //     },
+                        // ];
                     }
                 }
 
@@ -4109,13 +4109,13 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                     ];
                 } else if (modelIdLower.includes('claude')) {
                     // Claude 模型使用 web_search 工具
-                    webSearchTools = [
-                        {
-                            type: 'web_search_20250305',
-                            name: 'web_search',
-                            max_uses: modelConfig.webSearchMaxUses || 5,
-                        },
-                    ];
+                    // webSearchTools = [
+                    //     {
+                    //         type: 'web_search_20250305',
+                    //         name: 'web_search',
+                    //         max_uses: modelConfig.webSearchMaxUses || 5,
+                    //     },
+                    // ];
                 }
             }
 
