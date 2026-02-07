@@ -9120,6 +9120,27 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                 on:new={newSession}
                 on:update={e => handleSessionUpdate(e.detail.sessions)}
             />
+            <button
+                class="b3-button b3-button--text"
+                on:click={copyAsMarkdown}
+                title={t('aiSidebar.actions.copyAllChat')}
+            >
+                <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
+            </button>
+            <button
+                class="b3-button b3-button--text"
+                on:click={() => openSaveToNoteDialog()}
+                title={t('aiSidebar.actions.saveToNote')}
+            >
+                <svg class="b3-button__icon"><use xlink:href="#iconDownload"></use></svg>
+            </button>
+            <button
+                class="b3-button b3-button--text"
+                on:click={clearChat}
+                title={t('aiSidebar.actions.clear')}
+            >
+                <svg class="b3-button__icon"><use xlink:href="#iconTrashcan"></use></svg>
+            </button>
             <div class="ai-sidebar__open-window-menu-container" style="position: relative;">
                 <button
                     class="b3-button b3-button--text"
@@ -9146,27 +9167,6 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                     </div>
                 {/if}
             </div>
-            <button
-                class="b3-button b3-button--text"
-                on:click={copyAsMarkdown}
-                title={t('aiSidebar.actions.copyAllChat')}
-            >
-                <svg class="b3-button__icon"><use xlink:href="#iconCopy"></use></svg>
-            </button>
-            <button
-                class="b3-button b3-button--text"
-                on:click={() => openSaveToNoteDialog()}
-                title={t('aiSidebar.actions.saveToNote')}
-            >
-                <svg class="b3-button__icon"><use xlink:href="#iconDownload"></use></svg>
-            </button>
-            <button
-                class="b3-button b3-button--text"
-                on:click={clearChat}
-                title={t('aiSidebar.actions.clear')}
-            >
-                <svg class="b3-button__icon"><use xlink:href="#iconTrashcan"></use></svg>
-            </button>
             <button
                 class="b3-button b3-button--text"
                 on:click={toggleFullscreen}
