@@ -13,7 +13,8 @@
         isGemini3Model,
     } from './ai-chat';
     import type { MessageContent } from './ai-chat';
-    import { getActiveEditor } from 'siyuan';
+    import { getActiveEditor, openTab } from 'siyuan';
+    import { WEBAPP_TAB_TYPE } from './index';
     import {
         refreshSql,
         pushMsg,
@@ -42,6 +43,7 @@
     import ToolSelector, { type ToolConfig } from './components/ToolSelector.svelte';
     import ModelPresetButton from './components/ModelPreset.svelte';
     import TranslateDialog from './components/TranslateDialog.svelte';
+    import WebAppManager from './components/WebAppManager.svelte';
     import type { ProviderConfig } from './defaultSettings';
     import { settingsStore } from './stores/settings';
     import { confirm, Constants } from 'siyuan';
@@ -208,6 +210,22 @@
     let showTranslateHistory = false;
     let translateAbortController: AbortController | null = null;
     let currentTranslateId: string | null = null; // 当前查看的翻译ID
+
+    // 小程序功能
+    let isWebAppManagerOpen = false;
+    let showWebAppMenu = false;
+    let webAppMenuButton: HTMLButtonElement;
+    let webAppMenuDropdown: HTMLDivElement;
+    let webAppDropdownTop = 0;
+    let webAppDropdownLeft = 0;
+    let webApps: Array<{
+        id: string;
+        name: string;
+        url: string;
+        icon?: string;
+        createdAt: number;
+        updatedAt: number;
+    }> = [];
 
     // 消息内容显示缓存（存储每个消息的显示内容，键为content的哈希）
     const messageDisplayCache = new Map<string, { loading: boolean; content: string }>();
@@ -654,6 +672,134 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
             translateAbortController = null;
         }
         isTranslating = false;
+    }
+
+    // 小程序功能相关函数
+    // 切换小程序菜单
+    async function toggleWebAppMenu(event: MouseEvent) {
+        event.stopPropagation();
+        showWebAppMenu = !showWebAppMenu;
+        if (showWebAppMenu) {
+            await updateWebAppDropdownPosition();
+            setTimeout(() => {
+                document.addEventListener('click', closeWebAppMenuOnOutsideClick);
+            }, 0);
+        } else {
+            document.removeEventListener('click', closeWebAppMenuOnOutsideClick);
+        }
+    }
+
+    // 计算下拉菜单位置
+    async function updateWebAppDropdownPosition() {
+        if (!webAppMenuButton || !showWebAppMenu) return;
+
+        await tick();
+
+        const rect = webAppMenuButton.getBoundingClientRect();
+        const dropdownWidth = webAppMenuDropdown?.offsetWidth || 200;
+        const dropdownHeight = webAppMenuDropdown?.offsetHeight || 300;
+
+        // 计算垂直位置
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+
+        if (spaceBelow >= dropdownHeight || spaceBelow >= spaceAbove) {
+            // 显示在按钮下方
+            webAppDropdownTop = rect.bottom + 4;
+        } else {
+            // 显示在按钮上方
+            webAppDropdownTop = rect.top - dropdownHeight - 4;
+        }
+
+        // 计算水平位置（右对齐）
+        webAppDropdownLeft = rect.right - dropdownWidth;
+
+        // 确保下拉菜单不会超出视口左边界
+        if (webAppDropdownLeft < 8) {
+            webAppDropdownLeft = 8;
+        }
+
+        // 确保下拉菜单不会超出视口右边界
+        if (webAppDropdownLeft + dropdownWidth > window.innerWidth - 8) {
+            webAppDropdownLeft = window.innerWidth - dropdownWidth - 8;
+        }
+    }
+
+    // 点击外部关闭小程序菜单
+    function closeWebAppMenuOnOutsideClick(event: MouseEvent) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.ai-sidebar__webapp-menu-container')) {
+            showWebAppMenu = false;
+            document.removeEventListener('click', closeWebAppMenuOnOutsideClick);
+        }
+    }
+
+    // 打开小程序管理器
+    function openWebAppManager() {
+        showWebAppMenu = false;
+        document.removeEventListener('click', closeWebAppMenuOnOutsideClick);
+        isWebAppManagerOpen = true;
+    }
+
+    // 关闭小程序管理器
+    function closeWebAppManager() {
+        isWebAppManagerOpen = false;
+    }
+
+    // 保存小程序设置
+    async function saveWebApps(event: CustomEvent<{ webApps: any[] }>) {
+        webApps = event.detail.webApps;
+        settings.webApps = webApps;
+        await plugin.saveData('settings.json', settings);
+
+        // 为每个小程序注册图标
+        for (const app of webApps) {
+            if (app.icon && app.icon.startsWith('data:image')) {
+                plugin.registerWebAppIcon(app.id, app.icon);
+            }
+        }
+    }
+
+    // 打开小程序
+    function openWebApp(event: CustomEvent<{ app: any }>) {
+        const app = event.detail.app;
+        openWebAppDirect(app);
+    }
+
+    // 获取小程序图标URL（兼容base64和文件路径格式）
+    function getWebAppIconUrl(icon: string): string {
+        if (!icon) return '';
+        // 如果已经是base64格式，直接返回
+        if (icon.startsWith('data:')) {
+            return icon;
+        }
+        // 兼容旧的文件名格式
+        return `/data/storage/petal/siyuan-plugin-copilot/webappIcon/${icon}`;
+    }
+
+    // 直接打开小程序
+    function openWebAppDirect(app: any) {
+        showWebAppMenu = false;
+        document.removeEventListener('click', closeWebAppMenuOnOutsideClick);
+
+        // 如果小程序有自定义图标，使用自定义图标，否则使用默认图标
+        const iconId =
+            app.icon && app.icon.startsWith('data:image')
+                ? plugin.getWebAppIconId(app.id)
+                : 'iconCopilotWebApp';
+
+        // 使用 openTab API 打开小程序
+        openTab({
+            app: plugin.app,
+            custom: {
+                icon: iconId,
+                title: app.name,
+                id: plugin.name + WEBAPP_TAB_TYPE,
+                data: {
+                    app: app,
+                },
+            },
+        });
     }
 
     // 当模式切换时，更新已添加的上下文文档内容
@@ -1158,6 +1304,7 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
             const emptyBlob = new Blob([''], { type: 'text/plain' });
             await putFile('/data/storage/petal/siyuan-plugin-copilot/sessions', true, emptyBlob);
             await putFile('/data/storage/petal/siyuan-plugin-copilot/assets', true, emptyBlob);
+            await putFile('/data/storage/petal/siyuan-plugin-copilot/webappIcon', true, emptyBlob);
         } catch (e) {
             // 目录可能已存在
         }
@@ -1196,6 +1343,9 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
         translateModelId = settings.translateModelId || currentModelId || '';
         translateInputLanguage = settings.translateInputLanguage || 'auto';
         translateOutputLanguage = settings.translateOutputLanguage || 'zh-CN';
+
+        // 加载小程序设置
+        webApps = settings.webApps || [];
 
         // 如果有系统提示词，添加到消息列表
         if (settings.aiSystemPrompt) {
@@ -7776,6 +7926,12 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
             showOpenWindowMenu = false;
         }
 
+        // 关闭小程序菜单
+        if (showWebAppMenu && !target.closest('.ai-sidebar__webapp-menu-container')) {
+            showWebAppMenu = false;
+            document.removeEventListener('click', closeWebAppMenuOnOutsideClick);
+        }
+
         if (isPromptSelectorOpen) {
             const selector = document.querySelector('.ai-sidebar__prompt-selector');
             const buttons = document.querySelectorAll('.ai-sidebar__prompt-actions button');
@@ -8889,14 +9045,61 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                 class="b3-button b3-button--text"
                 on:click={openTranslateDialog}
                 title={t('aiSidebar.translate.openDialog') || '翻译'}
-                style="margin-right: 8px;"
             >
                 <svg class="b3-button__icon"><use xlink:href="#iconTranslate"></use></svg>
             </button>
+            <div class="ai-sidebar__webapp-menu-container">
+                <button
+                    class="b3-button b3-button--text"
+                    bind:this={webAppMenuButton}
+                    on:click={toggleWebAppMenu}
+                    title="小程序"
+                >
+                    <svg class="b3-button__icon"><use xlink:href="#iconCopilotWebApp"></use></svg>
+                </button>
+            </div>
             {#if hasUnsavedChanges}
                 <span class="ai-sidebar__unsaved" title={t('aiSidebar.unsavedChanges')}>●</span>
             {/if}
         </h3>
+
+        {#if showWebAppMenu}
+            <div
+                bind:this={webAppMenuDropdown}
+                class="ai-sidebar__webapp-menu"
+                style="top: {webAppDropdownTop}px; left: {webAppDropdownLeft}px;"
+            >
+                <button class="b3-menu__item" on:click={openWebAppManager}>
+                    <svg class="b3-menu__icon">
+                        <use xlink:href="#iconSettings"></use>
+                    </svg>
+                    <span class="b3-menu__label">管理小程序</span>
+                </button>
+                {#if webApps.length > 0}
+                    <div class="b3-menu__separator"></div>
+                    {#each webApps as app (app.id)}
+                        <button class="b3-menu__item" on:click={() => openWebAppDirect(app)}>
+                            <div
+                                class="b3-menu__icon"
+                                style="display: flex; align-items: center; justify-content: center;"
+                            >
+                                {#if app.icon}
+                                    <img
+                                        src={getWebAppIconUrl(app.icon)}
+                                        alt=""
+                                        style="width: 16px; height: 16px; object-fit: cover;"
+                                    />
+                                {:else}
+                                    <svg><use xlink:href="#iconGlobe"></use></svg>
+                                {/if}
+                            </div>
+                            <span class="b3-menu__label">{app.name}</span>
+                        </button>
+                    {/each}
+                {/if}
+            </div>
+        {/if}
+
         <div class="ai-sidebar__actions">
             <button
                 class="b3-button b3-button--text"
@@ -11399,6 +11602,15 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
         {settings}
         on:close={() => (isTranslateDialogOpen = false)}
     />
+
+    <!-- 小程序管理器 -->
+    <WebAppManager
+        bind:isOpen={isWebAppManagerOpen}
+        {plugin}
+        bind:webApps
+        on:save={saveWebApps}
+        on:open={openWebApp}
+    />
 </div>
 
 <style lang="scss">
@@ -11496,6 +11708,63 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
         .b3-menu__label {
             flex: 1;
         }
+    }
+
+    // 小程序菜单样式
+    .ai-sidebar__webapp-menu-container {
+        position: relative;
+        display: inline-block;
+    }
+
+    .ai-sidebar__webapp-menu {
+        position: fixed;
+        background: var(--b3-theme-background);
+        border: 1px solid var(--b3-border-color);
+        border-radius: 8px;
+        box-shadow: var(--b3-dialog-shadow);
+        min-width: 180px;
+        max-width: 250px;
+        max-height: 400px;
+        overflow-y: auto;
+        z-index: 10;
+    }
+
+    .ai-sidebar__webapp-menu .b3-menu__item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        width: 100%;
+        border: none;
+        background: none;
+        text-align: left;
+        cursor: pointer;
+        color: var(--b3-theme-on-background);
+        font-size: 14px;
+        transition: background-color 0.2s;
+
+        &:hover {
+            background: var(--b3-list-hover);
+        }
+
+        .b3-menu__icon {
+            width: 16px;
+            height: 16px;
+            flex-shrink: 0;
+        }
+
+        .b3-menu__label {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+    }
+
+    .ai-sidebar__webapp-menu .b3-menu__separator {
+        height: 1px;
+        background: var(--b3-border-color);
+        margin: 4px 0;
     }
 
     .ai-sidebar__context-docs {
