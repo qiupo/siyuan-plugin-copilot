@@ -31,10 +31,19 @@ import { getModelCapabilities } from "./utils/modelCapabilities";
 import { matchHotKey, getCustomHotKey } from "./utils/hotkey";
 
 export const SETTINGS_FILE = "settings.json";
+const WEBVIEW_HISTORY_FILE = "webview-history.json";
+const MAX_HISTORY_COUNT = 200;
 
 const AI_SIDEBAR_TYPE = "ai-chat-sidebar";
 export const AI_TAB_TYPE = "ai-chat-tab";
 export const WEBAPP_TAB_TYPE = "copilot-webapp";
+
+interface WebViewHistory {
+    url: string;
+    title: string;
+    timestamp: number;
+    visitCount: number;
+}
 
 
 
@@ -42,6 +51,97 @@ export default class PluginSample extends Plugin {
     private aiSidebarApp: AISidebar;
     private chatDialogs: Map<string, { dialog: Dialog; app: ChatDialog }> = new Map();
     private webApps: Map<string, any> = new Map(); // 存储待打开的小程序数据
+    private webViewHistory: WebViewHistory[] = []; // WebView 历史记录
+
+    /**
+     * 加载 WebView 历史记录
+     */
+    private async loadWebViewHistory(): Promise<WebViewHistory[]> {
+        try {
+            const history = await this.loadData(WEBVIEW_HISTORY_FILE);
+            return Array.isArray(history) ? history : [];
+        } catch (e) {
+            console.error('Failed to load webview history:', e);
+            return [];
+        }
+    }
+
+    /**
+     * 保存 WebView 历史记录
+     */
+    private async saveWebViewHistory() {
+        try {
+            // 限制历史记录数量
+            if (this.webViewHistory.length > MAX_HISTORY_COUNT) {
+                this.webViewHistory = this.webViewHistory
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, MAX_HISTORY_COUNT);
+            }
+            await this.saveData(WEBVIEW_HISTORY_FILE, this.webViewHistory);
+        } catch (e) {
+            console.error('Failed to save webview history:', e);
+        }
+    }
+
+    /**
+     * 添加到历史记录
+     */
+    private async addToWebViewHistory(url: string, title: string) {
+        if (!url) return;
+
+        // 查找是否已存在
+        const existingIndex = this.webViewHistory.findIndex(h => h.url === url);
+
+        if (existingIndex >= 0) {
+            // 更新现有记录
+            this.webViewHistory[existingIndex].title = title || url;
+            this.webViewHistory[existingIndex].timestamp = Date.now();
+            this.webViewHistory[existingIndex].visitCount++;
+        } else {
+            // 添加新记录
+            this.webViewHistory.unshift({
+                url,
+                title: title || url,
+                timestamp: Date.now(),
+                visitCount: 1
+            });
+        }
+
+        await this.saveWebViewHistory();
+    }
+
+    /**
+     * 搜索历史记录
+     * 支持空格分隔的多个关键词（AND 搜索）
+     */
+    private searchWebViewHistory(query: string): WebViewHistory[] {
+        if (!query.trim()) {
+            // 返回最近访问的记录
+            return this.webViewHistory
+                .slice(0, 10)
+                .sort((a, b) => b.timestamp - a.timestamp);
+        }
+
+        // 分割搜索关键词
+        const keywords = query.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+
+        // 过滤匹配所有关键词的记录
+        const filtered = this.webViewHistory.filter(item => {
+            const searchText = `${item.title} ${item.url}`.toLowerCase();
+            return keywords.every(keyword => searchText.includes(keyword));
+        });
+
+        // 按访问次数和时间排序
+        return filtered
+            .sort((a, b) => {
+                // 优先按访问次数排序
+                const countDiff = b.visitCount - a.visitCount;
+                if (countDiff !== 0) return countDiff;
+                // 其次按时间排序
+                return b.timestamp - a.timestamp;
+            })
+            .slice(0, 10);
+    }
 
     /**
      * 初始化 WebView Session 配置
@@ -142,6 +242,9 @@ export default class PluginSample extends Plugin {
         // 初始化 WebView Session 配置
         this.initWebViewSession();
 
+        // 加载历史记录
+        this.webViewHistory = await this.loadWebViewHistory();
+
         // 加载设置
         await this.loadSettings();
         this.addIcons(`
@@ -241,33 +344,224 @@ export default class PluginSample extends Plugin {
                     refreshBtn.innerHTML = '<svg class="b3-button__icon"><use xlink:href="#iconRefresh"></use></svg>';
                     navbar.appendChild(refreshBtn);
 
+                    // URL 输入框容器（包含输入框和建议列表）
+                    const urlInputWrapper = document.createElement('div');
+                    urlInputWrapper.style.flex = '1';
+                    urlInputWrapper.style.position = 'relative';
+
                     // URL 显示框
                     const urlInput = document.createElement('input');
                     urlInput.type = 'text';
                     urlInput.value = app.url;
                     urlInput.className = 'b3-text-field';
-                    urlInput.style.flex = '1';
+                    urlInput.style.width = '100%';
                     urlInput.style.fontSize = '13px';
                     urlInput.spellcheck = false;
+                    urlInput.autocomplete = 'off';
+                    urlInput.placeholder = '输入 URL 或搜索历史记录...';
 
+                    // 建议列表容器
+                    const suggestionList = document.createElement('div');
+                    suggestionList.style.position = 'absolute';
+                    suggestionList.style.top = '100%';
+                    suggestionList.style.left = '0';
+                    suggestionList.style.right = '0';
+                    suggestionList.style.maxHeight = '400px';
+                    suggestionList.style.overflowY = 'auto';
+                    suggestionList.style.background = 'var(--b3-theme-surface)';
+                    suggestionList.style.border = '1px solid var(--b3-border-color)';
+                    suggestionList.style.borderTop = 'none';
+                    suggestionList.style.borderRadius = '0 0 4px 4px';
+                    suggestionList.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+                    suggestionList.style.display = 'none';
+                    suggestionList.style.zIndex = '1000';
+
+                    // 选中的建议索引
+                    let selectedSuggestionIndex = -1;
+                    let currentSuggestions: WebViewHistory[] = [];
+
+                    // 渲染建议列表
+                    const renderSuggestions = (suggestions: WebViewHistory[]) => {
+                        currentSuggestions = suggestions;
+                        selectedSuggestionIndex = -1;
+                        suggestionList.innerHTML = '';
+
+                        if (suggestions.length === 0) {
+                            suggestionList.style.display = 'none';
+                            return;
+                        }
+
+                        suggestions.forEach((item, index) => {
+                            const suggestionItem = document.createElement('div');
+                            suggestionItem.style.padding = '8px 12px';
+                            suggestionItem.style.cursor = 'pointer';
+                            suggestionItem.style.display = 'flex';
+                            suggestionItem.style.flexDirection = 'column';
+                            suggestionItem.style.gap = '4px';
+                            suggestionItem.style.borderBottom = '1px solid var(--b3-border-color)';
+                            suggestionItem.dataset.index = String(index);
+
+                            // 标题
+                            const titleDiv = document.createElement('div');
+                            titleDiv.style.fontSize = '13px';
+                            titleDiv.style.color = 'var(--b3-theme-on-surface)';
+                            titleDiv.style.fontWeight = '500';
+                            titleDiv.textContent = item.title;
+                            suggestionItem.appendChild(titleDiv);
+
+                            // URL
+                            const urlDiv = document.createElement('div');
+                            urlDiv.style.fontSize = '12px';
+                            urlDiv.style.color = 'var(--b3-theme-on-surface-light)';
+                            urlDiv.style.overflow = 'hidden';
+                            urlDiv.style.textOverflow = 'ellipsis';
+                            urlDiv.style.whiteSpace = 'nowrap';
+                            urlDiv.textContent = item.url;
+                            suggestionItem.appendChild(urlDiv);
+
+                            // 鼠标悬停效果
+                            suggestionItem.addEventListener('mouseenter', () => {
+                                // 清除其他选中状态
+                                suggestionList.querySelectorAll('div[data-index]').forEach(el => {
+                                    (el as HTMLElement).style.background = '';
+                                    (el as HTMLElement).style.boxShadow = '';
+                                });
+                                suggestionItem.style.background = 'var(--b3-list-hover)';
+                                suggestionItem.style.boxShadow = 'inset 0 0 0 1px var(--b3-theme-primary)';
+                                selectedSuggestionIndex = index;
+                            });
+
+                            suggestionItem.addEventListener('mouseleave', () => {
+                                suggestionItem.style.background = '';
+                                suggestionItem.style.boxShadow = '';
+                            });
+
+                            // 点击选择
+                            suggestionItem.addEventListener('mousedown', (e) => {
+                                e.preventDefault(); // 防止失去焦点
+                                urlInput.value = item.url;
+                                suggestionList.style.display = 'none';
+                                // 导航到选中的 URL
+                                redirectCount = 0;
+                                lastUrl = item.url;
+                                webview.src = item.url;
+                                urlInput.blur();
+                            });
+
+                            suggestionList.appendChild(suggestionItem);
+                        });
+
+                        suggestionList.style.display = 'block';
+                    };
+
+                    // 更新选中项的视觉效果
+                    const updateSelectedSuggestion = () => {
+                        suggestionList.querySelectorAll('div[data-index]').forEach((el, index) => {
+                            if (index === selectedSuggestionIndex) {
+                                (el as HTMLElement).style.background = 'var(--b3-list-hover)';
+                                (el as HTMLElement).style.boxShadow = 'inset 0 0 0 1px var(--b3-theme-primary)';
+                                // 滚动到可见位置
+                                el.scrollIntoView({ block: 'nearest' });
+                            } else {
+                                (el as HTMLElement).style.background = '';
+                                (el as HTMLElement).style.boxShadow = '';
+                            }
+                        });
+                    };
+
+                    // 输入事件 - 搜索历史
+                    let searchTimeout: NodeJS.Timeout;
+                    urlInput.addEventListener('input', () => {
+                        clearTimeout(searchTimeout);
+                        searchTimeout = setTimeout(() => {
+                            const query = urlInput.value.trim();
+                            const results = pluginInstance.searchWebViewHistory(query);
+                            renderSuggestions(results);
+                        }, 150); // 防抖
+                    });
+
+                    // 获得焦点 - 显示建议
+                    urlInput.addEventListener('focus', () => {
+                        const query = urlInput.value.trim();
+                        const results = pluginInstance.searchWebViewHistory(query);
+                        renderSuggestions(results);
+                    });
+
+                    // 失去焦点 - 隐藏建议
+                    urlInput.addEventListener('blur', () => {
+                        // 延迟隐藏，以便点击事件能够触发
+                        setTimeout(() => {
+                            suggestionList.style.display = 'none';
+                        }, 200);
+                    });
+
+                    // 键盘导航
                     urlInput.addEventListener('keydown', (e: KeyboardEvent) => {
                         // 阻止冒泡，防止触发全局快捷键
                         e.stopPropagation();
-                        if (e.key === 'Enter') {
-                            let url = urlInput.value.trim();
-                            if (url) {
-                                if (!/^https?:\/\//i.test(url)) {
-                                    url = 'https://' + url;
-                                }
-                                // 手动导航时重置重定向计数器
-                                redirectCount = 0;
-                                lastUrl = url;
-                                webview.src = url;
-                                urlInput.blur();
+
+                        if (e.key === 'ArrowDown') {
+                            // 向下选择
+                            e.preventDefault();
+                            if (currentSuggestions.length > 0) {
+                                selectedSuggestionIndex = Math.min(
+                                    selectedSuggestionIndex + 1,
+                                    currentSuggestions.length - 1
+                                );
+                                updateSelectedSuggestion();
                             }
+                        } else if (e.key === 'ArrowUp') {
+                            // 向上选择
+                            e.preventDefault();
+                            if (currentSuggestions.length > 0) {
+                                selectedSuggestionIndex = Math.max(selectedSuggestionIndex - 1, -1);
+                                if (selectedSuggestionIndex === -1) {
+                                    // 返回输入框
+                                    suggestionList.querySelectorAll('div[data-index]').forEach(el => {
+                                        (el as HTMLElement).style.background = '';
+                                        (el as HTMLElement).style.boxShadow = '';
+                                    });
+                                } else {
+                                    updateSelectedSuggestion();
+                                }
+                            }
+                        } else if (e.key === 'Enter') {
+                            e.preventDefault();
+
+                            // 如果有选中的建议，使用建议
+                            if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < currentSuggestions.length) {
+                                const selected = currentSuggestions[selectedSuggestionIndex];
+                                urlInput.value = selected.url;
+                                suggestionList.style.display = 'none';
+                                redirectCount = 0;
+                                lastUrl = selected.url;
+                                webview.src = selected.url;
+                                urlInput.blur();
+                            } else {
+                                // 否则使用输入的内容
+                                let url = urlInput.value.trim();
+                                if (url) {
+                                    if (!/^https?:\/\//i.test(url)) {
+                                        url = 'https://' + url;
+                                    }
+                                    suggestionList.style.display = 'none';
+                                    redirectCount = 0;
+                                    lastUrl = url;
+                                    webview.src = url;
+                                    urlInput.blur();
+                                }
+                            }
+                        } else if (e.key === 'Escape') {
+                            // ESC 关闭建议列表
+                            e.preventDefault();
+                            suggestionList.style.display = 'none';
+                            selectedSuggestionIndex = -1;
                         }
                     });
-                    navbar.appendChild(urlInput);
+
+                    urlInputWrapper.appendChild(urlInput);
+                    urlInputWrapper.appendChild(suggestionList);
+                    navbar.appendChild(urlInputWrapper);
 
                     // 在默认浏览器打开按钮
                     const openInBrowserBtn = document.createElement('button');
@@ -424,6 +718,9 @@ export default class PluginSample extends Plugin {
 
                         urlInput.value = newUrl;
                         updateNavigationButtons();
+
+                        // 添加到历史记录（先使用 URL 作为标题，等标题更新时再更新）
+                        pluginInstance.addToWebViewHistory(newUrl, newUrl);
                     });
 
                     webview.addEventListener('did-navigate-in-page', (event: any) => {
@@ -456,6 +753,12 @@ export default class PluginSample extends Plugin {
                         const newTitle = event.title;
                         if (newTitle && this.tab && typeof this.tab.updateTitle === 'function') {
                             this.tab.updateTitle(newTitle);
+                        }
+
+                        // 更新历史记录的标题
+                        const currentUrl = webview.getURL();
+                        if (currentUrl && newTitle) {
+                            pluginInstance.addToWebViewHistory(currentUrl, newTitle);
                         }
                     });
 
@@ -953,6 +1256,7 @@ export default class PluginSample extends Plugin {
         console.log("Copilot uninstall");
         // 删除配置文件
         await this.removeData(SETTINGS_FILE);
+        await this.removeData(WEBVIEW_HISTORY_FILE);
         await this.removeData("chat-sessions.json");
         await this.removeData("prompts.json");
     }
