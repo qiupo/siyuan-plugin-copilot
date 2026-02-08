@@ -306,6 +306,7 @@ export default class PluginSample extends Plugin {
                         updateNavigationButtons();
                     });
 
+
                     // 全屏状态标志
                     let isFullscreen = false;
 
@@ -408,15 +409,44 @@ export default class PluginSample extends Plugin {
                     document.addEventListener('keydown', handleKeydown, true);
                     window.addEventListener('keydown', handleKeydown, true);
 
-                    // 尝试在 webview 加载完成后注入键盘监听
+                    // 监听 console 消息作为通信回退方案
+                    webview.addEventListener('console-message', (e: any) => {
+                        const msg = e.message || '';
+                        if (msg.startsWith('__SIYUAN_COPILOT_LINK__:')) {
+                            const url = msg.substring('__SIYUAN_COPILOT_LINK__:'.length);
+                            if (url) {
+                                openTab({
+                                    app: pluginInstance.app,
+                                    custom: {
+                                        icon: "iconCopilotWebApp",
+                                        title: "链接加载中...",
+                                        data: {
+                                            app: {
+                                                url: url,
+                                                name: "Web Link",
+                                                id: "weblink_" + Date.now()
+                                            }
+                                        },
+                                        id: pluginInstance.name + WEBAPP_TAB_TYPE
+                                    }
+                                });
+                            }
+                        }
+                    });
+
+                    // 尝试在 webview 加载完成后注入键盘监听和点击拦截
                     webview.addEventListener('dom-ready', () => {
                         webviewReady = true; // 标记 webview 已准备好
                         updateNavigationButtons(); // 初始化导航按钮状态
 
                         try {
-                            // 注入脚本来监听 webview 内部的键盘事件
+                            // 注入脚本来监听 webview 内部的键盘事件和点击事件
                             const script = `
                                 (function() {
+                                    // 注入一次即可，防止重复
+                                    if (window.__siyuan_copilot_injected) return;
+                                    window.__siyuan_copilot_injected = true;
+
                                     document.addEventListener('keydown', function(e) {
                                         // Alt+Y
                                         if (e.altKey && e.key.toLowerCase() === 'y') {
@@ -430,6 +460,22 @@ export default class PluginSample extends Plugin {
                                             window.parent.postMessage({ type: 'webapp-hotkey', key: 'escape' }, '*');
                                         }
                                     }, true);
+
+                                    // 监听点击事件，拦截 target="_blank"
+                                    document.addEventListener('click', function(e) {
+                                        var target = e.target;
+                                        // 查找最近的 a 标签
+                                        while (target && target.tagName !== 'A' && target !== document) {
+                                            target = target.parentNode;
+                                        }
+                                        
+                                        if (target && target.tagName === 'A' && target.getAttribute('target') === '_blank') {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            // 使用 console.log 传递消息，这在 Electron webview 中通常更可靠
+                                            console.log('__SIYUAN_COPILOT_LINK__:' + target.href);
+                                        }
+                                    }, true);
                                 })();
                             `;
                             webview.executeJavaScript(script);
@@ -438,9 +484,11 @@ export default class PluginSample extends Plugin {
                         }
                     });
 
-                    // 监听来自 webview 的消息
+                    // 监听来自 webview 的消息 (保留作为热键处理的兼容)
                     const handleMessage = (event: MessageEvent) => {
-                        if (event.data?.type === 'webapp-hotkey') {
+                        if (!event.data) return;
+                        
+                        if (event.data.type === 'webapp-hotkey') {
                             if (event.data.key === 'alt-y') {
                                 toggleFullscreen();
                             } else if (event.data.key === 'escape' && isFullscreen) {
