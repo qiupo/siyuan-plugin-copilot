@@ -170,6 +170,13 @@ export default class PluginSample extends Plugin {
                     fullscreenBtn.innerHTML = '<svg class="b3-button__icon"><use xlink:href="#iconFullscreen"></use></svg>';
                     toolbar.appendChild(fullscreenBtn);
 
+                    // 在默认浏览器打开按钮
+                    const openInBrowserBtn = document.createElement('button');
+                    openInBrowserBtn.className = 'b3-button b3-button--text';
+                    openInBrowserBtn.title = '在默认浏览器打开';
+                    openInBrowserBtn.innerHTML = '<svg class="b3-button__icon"><use xlink:href="#iconOpenWindow"></use></svg>';
+                    toolbar.appendChild(openInBrowserBtn);
+
                     container.appendChild(toolbar);
 
                     // 鼠标移入显示工具栏
@@ -232,6 +239,36 @@ export default class PluginSample extends Plugin {
                         e.preventDefault();
                         e.stopPropagation();
                         toggleFullscreen();
+                    });
+
+                    // 在默认浏览器中打开按钮点击事件
+                    const openInDefaultBrowser = () => {
+                        try {
+                            // 尝试通过后端接口打开（如果可用）
+                            const backend = typeof getBackend === 'function' ? (getBackend() as any) : null;
+                            if (backend && typeof backend.openExternal === 'function') {
+                                backend.openExternal(app.url);
+                                return;
+                            }
+
+                            // 尝试使用 window.siyuan 提供的方法（不同环境可能暴露不同接口）
+                            if ((window as any).siyuan && typeof (window as any).siyuan.openExternal === 'function') {
+                                (window as any).siyuan.openExternal(app.url);
+                                return;
+                            }
+
+                            // 回退到 window.open
+                            window.open(app.url, '_blank', 'noopener');
+                        } catch (err) {
+                            console.warn('打开外部链接失败，使用 window.open 回退：', err);
+                            window.open(app.url, '_blank', 'noopener');
+                        }
+                    };
+
+                    openInBrowserBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openInDefaultBrowser();
                     });
 
                     // 键盘事件处理
