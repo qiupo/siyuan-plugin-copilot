@@ -125,7 +125,6 @@ export default class PluginSample extends Plugin {
                 // Svelte组件会自动清理
             }
         });
-
         // 注册小程序标签页类型
         this.addTab({
             type: WEBAPP_TAB_TYPE,
@@ -185,12 +184,25 @@ export default class PluginSample extends Plugin {
                     // URL 显示框
                     const urlInput = document.createElement('input');
                     urlInput.type = 'text';
-                    urlInput.readOnly = true;
                     urlInput.value = app.url;
                     urlInput.className = 'b3-text-field';
                     urlInput.style.flex = '1';
                     urlInput.style.fontSize = '13px';
-                    urlInput.style.cursor = 'text';
+                    
+                    urlInput.addEventListener('keydown', (e: KeyboardEvent) => {
+                        // 阻止冒泡，防止触发全局快捷键
+                        e.stopPropagation();
+                        if (e.key === 'Enter') {
+                            let url = urlInput.value.trim();
+                            if (url) {
+                                if (!/^https?:\/\//i.test(url)) {
+                                    url = 'https://' + url;
+                                }
+                                webview.src = url;
+                                urlInput.blur();
+                            }
+                        }
+                    });
                     navbar.appendChild(urlInput);
 
                     // 在默认浏览器打开按钮
@@ -221,6 +233,8 @@ export default class PluginSample extends Plugin {
                     webview.style.width = '100%';
                     webview.style.height = '100%';
                     webview.style.border = 'none';
+                    // 允许弹出窗口（target="_blank" 等）
+                    webview.setAttribute('allowpopups', 'true');
 
                     webviewWrapper.appendChild(webview);
                     container.appendChild(webviewWrapper);
