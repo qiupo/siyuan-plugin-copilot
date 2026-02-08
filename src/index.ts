@@ -44,6 +44,63 @@ export default class PluginSample extends Plugin {
     private webApps: Map<string, any> = new Map(); // 存储待打开的小程序数据
 
     /**
+     * 初始化 WebView Session 配置
+     * 设置 User-Agent 和请求拦截，解决 Google 等网站的登录问题
+     */
+    private initWebViewSession() {
+        try {
+            // 检查是否可以访问 require
+            if (typeof (window as any).require !== 'function') {
+                console.warn('[WebApp Session] 当前环境不支持 require，无法配置 session，将仅在 webview 层面设置 UA');
+                return;
+            }
+            
+            // 尝试访问 Electron 的 session API
+            const { session } = (window as any).require('electron');
+            if (!session) {
+                console.warn('[WebApp Session] 无法加载 Electron session 模块');
+                return;
+            }
+            
+            const partitionName = 'persist:siyuan-copilot-webapp-shared';
+            const webSession = session.fromPartition(partitionName);
+            
+            // 获取原始 User-Agent
+            const originUA = webSession.getUserAgent();
+            
+            // 生成清理后的 User-Agent（移除 Electron 等标识）
+            let cleanUA = originUA
+                .replace(/Electron\/\S+\s?/gi, '')
+                .replace(/SiYuan\/\S+\s?/gi, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+            
+            // 如果清理后的 UA 为空或太短，使用标准的 Chrome UA
+            if (!cleanUA || cleanUA.length < 50) {
+                cleanUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+            }
+            
+            
+            // 设置默认 User-Agent
+            webSession.setUserAgent(cleanUA);
+            
+            // 拦截请求头，对 Google 使用原始 UA，其他网站使用清理后的 UA
+            webSession.webRequest.onBeforeSendHeaders((details: any, callback: any) => {
+                const isGoogle = details.url.includes('google.com') || details.url.includes('googleapis.com') || details.url.includes('gstatic.com');
+                const headers = {
+                    ...details.requestHeaders,
+                    'User-Agent': isGoogle ? originUA : cleanUA,
+                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-US;q=0.7'
+                };
+                callback({ requestHeaders: headers });
+            });
+            
+        } catch (error) {
+            console.warn('[WebApp Session] Session 初始化失败，将仅在 webview 层面设置 UA:', error);
+        }
+    }
+
+    /**
      * 注册小程序图标
      */
     registerWebAppIcon(appId: string, iconBase64: string) {
@@ -81,6 +138,9 @@ export default class PluginSample extends Plugin {
         // 插件被启用时会自动调用这个函数
         // 设置i18n插件实例
         setPluginInstance(this);
+
+        // 初始化 WebView Session 配置
+        this.initWebViewSession();
 
         // 加载设置
         await this.loadSettings();
@@ -239,21 +299,48 @@ export default class PluginSample extends Plugin {
 
                     // 创建 webview 元素
                     const webview = document.createElement('webview') as any;
-                    webview.src = app.url;
                     webview.style.width = '100%';
                     webview.style.height = '100%';
                     webview.style.border = 'none';
 
-                    // 配置 webview 属性
+                    // 生成干净的 User-Agent（移除 Electron 等标识）
+                    const generateCleanUserAgent = () => {
+                        // 获取当前的 User-Agent
+                        const originUA = navigator.userAgent;
+                        // 移除 Electron 和相关标识，使其看起来像普通的 Chrome 浏览器
+                        let cleanUA = originUA
+                            .replace(/Electron\/\S+\s?/gi, '')
+                            .replace(/SiYuan\/\S+\s?/gi, '')
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        
+                        // 如果清理后的 UA 为空或太短，使用标准的 Chrome UA
+                        if (!cleanUA || cleanUA.length < 50) {
+                            cleanUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+                        }
+                        
+                        
+                        return cleanUA;
+                    };
+
+                    // 配置 webview 属性（必须在设置 src 之前设置 partition）
                     webview.setAttribute('allowpopups', 'true');
-                    // 为每个 webapp 设置独立的 partition，确保会话隔离
-                    webview.setAttribute('partition', `persist:webapp-${app.id}`);
+                    // 所有 webapp 使用同一个 partition，这样可以在不同标签页和跨域导航时共享登录状态
+                    // 这解决了在一个标签页登录后，新标签页或跨域跳转时需要重新登录的问题
+                    const partitionName = 'persist:siyuan-copilot-webapp-shared';
+                    webview.setAttribute('partition', partitionName);
                     // 禁用 node integration 以提高安全性
                     webview.setAttribute('nodeintegration', 'false');
-                    // 设置 User-Agent，避免某些网站因为检测到 Electron 而限制功能
-                    webview.setAttribute('useragent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-                    // 允许跨域请求（某些 webapp 需要）
-                    webview.setAttribute('webpreferences', 'allowRunningInsecureContent');
+                    // 设置清理后的 User-Agent，移除 Electron 标识以避免被网站检测和限制
+                    const userAgent = generateCleanUserAgent();
+                    webview.setAttribute('useragent', userAgent);
+                    // 设置 webpreferences，启用现代 Web 功能
+                    // contextIsolation=yes: 启用上下文隔离以提高安全性
+                    // webSecurity=yes: 启用 Web 安全策略
+                    webview.setAttribute('webpreferences', 'contextIsolation=yes, webSecurity=yes');
+                    
+                    // 最后设置 src，因为 partition 等属性必须在加载 URL 之前设置
+                    webview.src = app.url;
 
                     webviewWrapper.appendChild(webview);
                     container.appendChild(webviewWrapper);
@@ -632,7 +719,6 @@ export default class PluginSample extends Plugin {
                 }
             },
             beforeDestroy() {
-                console.log('before destroy:', this.data);
             },
             destroy() {
                 // 清理工作（如果需要）
@@ -787,12 +873,12 @@ export default class PluginSample extends Plugin {
 
     async onunload() {
         //当插件被禁用的时候，会自动调用这个函数
-        console.log("onunload");
+        console.log("Copilot onunload");
     }
 
     async uninstall() {
         //当插件被卸载的时候，会自动调用这个函数
-        console.log("uninstall");
+        console.log("Copilot uninstall");
         // 删除配置文件
         await this.removeData(SETTINGS_FILE);
         await this.removeData("chat-sessions.json");
