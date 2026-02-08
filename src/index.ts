@@ -32,6 +32,7 @@ import { matchHotKey, getCustomHotKey } from "./utils/hotkey";
 
 export const SETTINGS_FILE = "settings.json";
 const WEBVIEW_HISTORY_FILE = "webview-history.json";
+const FAVICON_CACHE_FILE = "favicon-cache.json";
 const MAX_HISTORY_COUNT = 200;
 
 const AI_SIDEBAR_TYPE = "ai-chat-sidebar";
@@ -186,7 +187,7 @@ export default class PluginSample extends Plugin {
 
             // 拦截请求头，对 Google 使用原始 UA，其他网站使用清理后的 UA
             webSession.webRequest.onBeforeSendHeaders((details: any, callback: any) => {
-                const isGoogle = details.url.includes('google.com') || details.url.includes('googleapis.com') || details.url.includes('gstatic.com');
+                const isGoogle = details.url.includes('google.com') || details.url.includes('googleapis.com') || details.url.includes('gstatic.com') || details.url.includes('github.com');
                 const headers = {
                     ...details.requestHeaders,
                     'User-Agent': isGoogle ? originUA : cleanUA,
@@ -232,6 +233,126 @@ export default class PluginSample extends Plugin {
      */
     getWebAppIconId(appId: string): string {
         return `iconWebApp_${appId}`;
+    }
+
+    // 将 Blob 转为 data URL
+    private blobToDataURL(blob: Blob): Promise<string> {
+        return new Promise((resolve, reject) => {
+            try {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    resolve(reader.result as string);
+                };
+                reader.onerror = (e) => reject(e);
+                reader.readAsDataURL(blob);
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    // 从 URL 中提取域名
+    private getDomainFromUrl(url: string): string {
+        try {
+            const u = new URL(url);
+            return u.hostname;
+        } catch (e) {
+            return '';
+        }
+    }
+
+    // 依次尝试多个 favicon 源，遇到第一个成功的就返回 data:image...
+    private async tryFetchFavicon(domain: string): Promise<string | null> {
+        if (!domain) return null;
+
+        const sources = [
+            // FaviconIm (尝试常见的路径)
+            `https://favicon.im/${domain}`,
+            `https://favicon.im/favicon/${domain}`,
+            // Google Favicons
+            `https://www.google.com/s2/favicons?sz=64&domain=${domain}`,
+            // Unavatar
+            `https://unavatar.io/${domain}`,
+            // DuckDuckGo
+            `https://icons.duckduckgo.com/ip3/${domain}.ico`
+        ];
+
+        for (const src of sources) {
+            try {
+                const resp = await fetch(src, { mode: 'cors' });
+                if (!resp.ok) continue;
+                const ct = (resp.headers.get('content-type') || '').toLowerCase();
+                if (ct.startsWith('image') || src.endsWith('.ico')) {
+                    const blob = await resp.blob();
+                    if (!blob || blob.size === 0) continue;
+                    try {
+                        const dataUrl = await this.blobToDataURL(blob);
+                        if (dataUrl && dataUrl.startsWith('data:image')) {
+                            return dataUrl;
+                        }
+                    } catch (e) {
+                        // 转换失败，继续下一源
+                        console.warn('favicon 转换失败', e);
+                        continue;
+                    }
+                }
+            } catch (e) {
+                // 网络或 CORS 错误，尝试下一个
+                console.warn('尝试 favicon 源失败:', src, e);
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    // 为域名获取或创建图标并返回可用于 openTab 的 icon id
+    private async getOrCreateIconForDomain(url: string): Promise<string> {
+        try {
+            const domain = this.getDomainFromUrl(url);
+            if (!domain) return 'iconCopilotWebApp';
+            // 使用独立缓存文件保存 favicon 映射，格式: { [domain]: dataUrl }
+            let cache: Record<string, string> = {};
+            try {
+                const raw = await this.loadData(FAVICON_CACHE_FILE);
+                if (raw && typeof raw === 'object') cache = raw as Record<string, string>;
+            } catch (e) {
+                // ignore
+            }
+
+            // 如果已有缓存，直接注册并返回
+            if (cache[domain]) {
+                try {
+                    this.registerWebAppIcon(domain, cache[domain]);
+                    return this.getWebAppIconId(domain);
+                } catch (e) {
+                    console.warn('注册已缓存 favicon 失败:', e);
+                }
+            }
+
+            // 否则尝试抓取
+            const fetched = await this.tryFetchFavicon(domain);
+            if (fetched) {
+                // 保存到独立缓存并持久化
+                cache[domain] = fetched;
+                try {
+                    await this.saveData(FAVICON_CACHE_FILE, cache);
+                } catch (e) {
+                    console.warn('保存 favicon 到缓存文件失败:', e);
+                }
+
+                try {
+                    this.registerWebAppIcon(domain, fetched);
+                    return this.getWebAppIconId(domain);
+                } catch (e) {
+                    console.warn('注册抓取到的 favicon 失败:', e);
+                }
+            }
+        } catch (e) {
+            console.warn('getOrCreateIconForDomain 出错:', e);
+        }
+
+        return 'iconCopilotWebApp';
     }
 
     async onload() {
@@ -925,24 +1046,60 @@ export default class PluginSample extends Plugin {
                                     console.warn('Failed to parse URL:', e);
                                 }
 
-                                // 使用当前 Tab 的 icon，如果没有则使用默认 icon
-                                const currentIcon = this.tab?.icon || "iconCopilotWebApp";
-
-                                openTab({
-                                    app: pluginInstance.app,
-                                    custom: {
-                                        icon: currentIcon,
-                                        title: initialTitle,
-                                        data: {
-                                            app: {
-                                                url: url,
-                                                name: initialTitle,
-                                                id: "weblink_" + Date.now()
+                                // 异步获取域名图标（会缓存），获取失败则回退默认图标
+                                try {
+                                    pluginInstance.getOrCreateIconForDomain(url).then((iconId) => {
+                                        openTab({
+                                            app: pluginInstance.app,
+                                            custom: {
+                                                icon: iconId,
+                                                title: initialTitle,
+                                                data: {
+                                                    app: {
+                                                        url: url,
+                                                        name: initialTitle,
+                                                        id: "weblink_" + Date.now()
+                                                    }
+                                                },
+                                                id: pluginInstance.name + WEBAPP_TAB_TYPE
                                             }
-                                        },
-                                        id: pluginInstance.name + WEBAPP_TAB_TYPE
-                                    }
-                                });
+                                        });
+                                    }).catch((err) => {
+                                        console.warn('获取域名图标失败，使用默认图标:', err);
+                                        openTab({
+                                            app: pluginInstance.app,
+                                            custom: {
+                                                icon: "iconCopilotWebApp",
+                                                title: initialTitle,
+                                                data: {
+                                                    app: {
+                                                        url: url,
+                                                        name: initialTitle,
+                                                        id: "weblink_" + Date.now()
+                                                    }
+                                                },
+                                                id: pluginInstance.name + WEBAPP_TAB_TYPE
+                                            }
+                                        });
+                                    });
+                                } catch (e) {
+                                    console.warn('打开外部链接时图标获取异常，使用默认图标:', e);
+                                    openTab({
+                                        app: pluginInstance.app,
+                                        custom: {
+                                            icon: "iconCopilotWebApp",
+                                            title: initialTitle,
+                                            data: {
+                                                app: {
+                                                    url: url,
+                                                    name: initialTitle,
+                                                    id: "weblink_" + Date.now()
+                                                }
+                                            },
+                                            id: pluginInstance.name + WEBAPP_TAB_TYPE
+                                        }
+                                    });
+                                }
                             }
                         }
                     });
@@ -1072,6 +1229,24 @@ export default class PluginSample extends Plugin {
                 }
             }
 
+            // 注册已缓存的域名 favicon（如果有），从独立的缓存文件加载
+            try {
+                const faviconCache = (await this.loadData(FAVICON_CACHE_FILE)) || {};
+                if (faviconCache && typeof faviconCache === 'object') {
+                    for (const [domain, iconBase64] of Object.entries(faviconCache)) {
+                        if (typeof iconBase64 === 'string' && iconBase64.startsWith('data:image')) {
+                            try {
+                                this.registerWebAppIcon(domain, iconBase64);
+                            } catch (e) {
+                                console.warn('注册域名缓存图标失败:', domain, e);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('加载 favicon 缓存失败:', e);
+            }
+
             // 监听链接点击事件（仅在启用时）
             if (settings?.openLinksInWebView) {
                 this.setupLinkClickListener();
@@ -1129,18 +1304,34 @@ export default class PluginSample extends Plugin {
                         // 存储到待打开列表
                         this.webApps.set(appData.id, appData);
 
-                        // 打开标签页
-                        openTab({
-                            app: this.app,
-                            custom: {
-                                icon: "iconCopilotWebApp",
-                                title: appData.name,
-                                data: {
-                                    app: appData
-                                },
-                                id: this.name + WEBAPP_TAB_TYPE
-                            }
-                        });
+                        // 先获取或创建与域名对应的图标（会缓存到 settings）
+                        try {
+                            const iconId = await this.getOrCreateIconForDomain(href);
+                            openTab({
+                                app: this.app,
+                                custom: {
+                                    icon: iconId,
+                                    title: appData.name,
+                                    data: {
+                                        app: appData
+                                    },
+                                    id: this.name + WEBAPP_TAB_TYPE
+                                }
+                            });
+                        } catch (e) {
+                            console.warn('打开 webapp 时获取图标失败，使用默认图标:', e);
+                            openTab({
+                                app: this.app,
+                                custom: {
+                                    icon: "iconCopilotWebApp",
+                                    title: appData.name,
+                                    data: {
+                                        app: appData
+                                    },
+                                    id: this.name + WEBAPP_TAB_TYPE
+                                }
+                            });
+                        }
 
                         return false;
                     }
