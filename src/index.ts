@@ -18,7 +18,7 @@ import {
     ICardData
 } from "siyuan";
 
-import { appendBlock, deleteBlock, setBlockAttrs, getBlockAttrs, pushMsg, pushErrMsg, sql, renderSprig, getChildBlocks, insertBlock, renameDocByID, prependBlock, updateBlock, createDocWithMd, getBlockKramdown, getBlockDOM } from "./api";
+import { appendBlock, deleteBlock, setBlockAttrs, getBlockAttrs, pushMsg, pushErrMsg, sql, renderSprig, getChildBlocks, insertBlock, renameDocByID, prependBlock, updateBlock, createDocWithMd, getBlockKramdown, getBlockDOM, putFile, getFileBlob, readDir } from "./api";
 import "@/index.scss";
 
 import SettingPanel from "./SettingsPannel.svelte";
@@ -32,7 +32,7 @@ import { matchHotKey, getCustomHotKey } from "./utils/hotkey";
 
 export const SETTINGS_FILE = "settings.json";
 const WEBVIEW_HISTORY_FILE = "webview-history.json";
-const FAVICON_CACHE_FILE = "favicon-cache.json";
+const WEBAPP_ICON_DIR = "/data/storage/petal/siyuan-plugin-copilot/webappIcon";
 const MAX_HISTORY_COUNT = 200;
 
 const AI_SIDEBAR_TYPE = "ai-chat-sidebar";
@@ -53,6 +53,7 @@ export default class PluginSample extends Plugin {
     private chatDialogs: Map<string, { dialog: Dialog; app: ChatDialog }> = new Map();
     private webApps: Map<string, any> = new Map(); // 存储待打开的小程序数据
     private webViewHistory: WebViewHistory[] = []; // WebView 历史记录
+    private domainIconMap: Map<string, string> = new Map(); // 缓存域名与图标文件名的映射
 
     /**
      * 加载 WebView 历史记录
@@ -251,43 +252,135 @@ export default class PluginSample extends Plugin {
         return null;
     }
 
+    private getExtensionFromMime(mime: string): string {
+        if (!mime) return 'png';
+        mime = mime.toLowerCase();
+        if (mime.includes('png')) return 'png';
+        if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+        if (mime.includes('gif')) return 'gif';
+        if (mime.includes('svg')) return 'svg';
+        if (mime.includes('icon') || mime.includes('ico')) return 'ico';
+        if (mime.includes('webp')) return 'webp';
+        return 'png';
+    }
+
+    private dataURItoBlob(dataURI: string): Blob | null {
+        try {
+            // convert base64/URLEncoded data component to raw binary data held in a string
+            let byteString;
+            if (dataURI.split(',')[0].indexOf('base64') >= 0)
+                byteString = atob(dataURI.split(',')[1]);
+            else
+                byteString = decodeURI(dataURI.split(',')[1]);
+
+            // separate out the mime component
+            let mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+
+            // write the bytes of the string to a typed array
+            let ia = new Uint8Array(byteString.length);
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+
+            return new Blob([ia], { type: mimeString });
+        } catch (e) {
+            console.error('dataURItoBlob failed', e);
+            return null;
+        }
+    }
+
     // 为域名获取或创建图标并返回可用于 openTab 的 icon id
     private async getOrCreateIconForDomain(url: string): Promise<string> {
         try {
             const domain = this.getDomainFromUrl(url);
             if (!domain) return 'iconCopilotWebApp';
-            // 使用独立缓存文件保存 favicon 映射，格式: { [domain]: dataUrl }
-            let cache: Record<string, string> = {};
-            try {
-                const raw = await this.loadData(FAVICON_CACHE_FILE);
-                if (raw && typeof raw === 'object') cache = raw as Record<string, string>;
-            } catch (e) {
-                // ignore
+
+            // 优先检查是否有已配置的 WebApp 使用此域名
+            // 这样用户自定义的图标优先级最高
+            if (this.data && this.data.webApps && Array.isArray(this.data.webApps)) {
+                const matchedApp = this.data.webApps.find((app: any) => {
+                    try {
+                        return this.getDomainFromUrl(app.url) === domain;
+                    } catch (e) { return false; }
+                });
+
+                if (matchedApp && matchedApp.icon && !matchedApp.icon.startsWith('data:')) {
+                    const iconFilename = matchedApp.icon;
+                    // 如果内存映射中没有，或者映射的文件名不同（虽然按我们的逻辑应该是一样的，但为了安全），尝试加载
+                    // 注意：如果文件名相同但文件内容变了，这里无法检测，需要由 Save 动作触发重载，或者这里不缓存 DataUrl
+                    // 但为了性能，我们假设 index.ts 加载后文件内容不变。
+
+                    if (!this.domainIconMap.has(domain) || this.domainIconMap.get(domain) !== iconFilename) {
+                        const iconPath = `${WEBAPP_ICON_DIR}/${iconFilename}`;
+                        try {
+                            const blob = await getFileBlob(iconPath);
+                            if (blob) {
+                                // 检查是否是旧格式 (.icon 文本文件)
+                                if (iconFilename.endsWith('.icon')) {
+                                    const iconData = await blob.text();
+                                    if (iconData && iconData.startsWith('data:image')) {
+                                        this.registerWebAppIcon(domain, iconData);
+                                        this.domainIconMap.set(domain, iconFilename);
+                                        return this.getWebAppIconId(domain);
+                                    }
+                                } else {
+                                    // 图片文件
+                                    const iconData = await this.blobToDataURL(blob);
+                                    if (iconData) {
+                                        this.registerWebAppIcon(domain, iconData);
+                                        this.domainIconMap.set(domain, iconFilename);
+                                        return this.getWebAppIconId(domain);
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // quiet fail, fall through to fetch
+                        }
+                    } else {
+                        // 映射已存在且一致，确实已注册
+                        return this.getWebAppIconId(domain);
+                    }
+                }
             }
 
-            // 如果已有缓存，直接注册并返回
-            if (cache[domain]) {
-                try {
-                    this.registerWebAppIcon(domain, cache[domain]);
-                    return this.getWebAppIconId(domain);
-                } catch (e) {
-                    console.warn('注册已缓存 favicon 失败:', e);
-                }
+            // 检查缓存 Map
+            if (this.domainIconMap.has(domain)) {
+                // 如果已有缓存文件，尝试注册（如果尚未注册，这里假设已经注册或注册失败不影响获取 ID）
+                // 实际上我们应该确保它被注册。
+                // 如果 onload 成功，它应该被注册了。
+                // 如果是本次 session 新添加的，它也被注册了。
+                return this.getWebAppIconId(domain);
             }
 
             // 否则尝试抓取
-            const fetched = await this.tryFetchFavicon(domain);
-            if (fetched) {
-                // 保存到独立缓存并持久化
-                cache[domain] = fetched;
+            const fetchedDataUri = await this.tryFetchFavicon(domain);
+            if (fetchedDataUri) {
+                // 解析 mime
+                let mime = 'image/png';
                 try {
-                    await this.saveData(FAVICON_CACHE_FILE, cache);
-                } catch (e) {
-                    console.warn('保存 favicon 到缓存文件失败:', e);
+                    const match = fetchedDataUri.match(/data:([^;]+);/);
+                    if (match) mime = match[1];
+                } catch (e) { }
+
+                const ext = this.getExtensionFromMime(mime);
+                const filename = `${domain}.${ext}`;
+                const savePath = `${WEBAPP_ICON_DIR}/${filename}`;
+
+                // 转换为 Blob
+                const blob = this.dataURItoBlob(fetchedDataUri);
+
+                if (blob) {
+                    // 保存到独立文件（图片格式）
+                    try {
+                        await putFile(savePath, false, blob);
+                        this.domainIconMap.set(domain, filename);
+                    } catch (e) {
+                        console.warn('保存 favicon 到文件失败:', e);
+                    }
                 }
 
                 try {
-                    this.registerWebAppIcon(domain, fetched);
+                    this.registerWebAppIcon(domain, fetchedDataUri);
                     return this.getWebAppIconId(domain);
                 } catch (e) {
                     console.warn('注册抓取到的 favicon 失败:', e);
@@ -918,13 +1011,8 @@ export default class PluginSample extends Plugin {
                                 try {
                                     const domain = pluginInstance.getDomainFromUrl(url);
                                     if (!domain) return;
-                                    const cache = (await pluginInstance.loadData(FAVICON_CACHE_FILE)) || {};
-                                    if (cache && cache[domain]) {
-                                        try {
-                                            pluginInstance.registerWebAppIcon(domain, cache[domain]);
-                                        } catch (e) {
-                                            console.warn('注册本地缓存 favicon 失败:', e);
-                                        }
+
+                                    if (pluginInstance.domainIconMap.has(domain)) {
                                         try {
                                             tabPromise.then((tp: any) => { try { tp.icon = pluginInstance.getWebAppIconId(domain); } catch (e) { } });
                                         } catch (e) { }
@@ -1443,21 +1531,47 @@ export default class PluginSample extends Plugin {
             }
 
             // 注册已缓存的域名 favicon（如果有），从独立的缓存文件加载
+            this.domainIconMap.clear();
             try {
-                const faviconCache = (await this.loadData(FAVICON_CACHE_FILE)) || {};
-                if (faviconCache && typeof faviconCache === 'object') {
-                    for (const [domain, iconBase64] of Object.entries(faviconCache)) {
-                        if (typeof iconBase64 === 'string' && iconBase64.startsWith('data:image')) {
-                            try {
-                                this.registerWebAppIcon(domain, iconBase64);
-                            } catch (e) {
-                                console.warn('注册域名缓存图标失败:', domain, e);
-                            }
+                // 读取 webappIcon 目录下的所有图标
+                const files = await readDir(WEBAPP_ICON_DIR);
+                if (files && Array.isArray(files)) {
+                    for (const file of files) {
+                        if (file.isDir) continue;
+
+                        // 支持的后缀
+                        const supportedExts = ['.icon', '.png', '.ico', '.svg', '.jpg', '.jpeg', '.gif', '.webp'];
+                        const ext = supportedExts.find(e => file.name.toLowerCase().endsWith(e));
+
+                        if (ext) {
+                            // 移除后缀得到域名
+                            const domain = file.name.substring(0, file.name.length - ext.length);
+                            this.domainIconMap.set(domain, file.name);
+
+                            // 异步加载并注册，不阻塞主流程
+                            getFileBlob(`${WEBAPP_ICON_DIR}/${file.name}`).then(async (blob) => {
+                                if (blob) {
+                                    // 对于图片文件，转换为 dataURL
+                                    try {
+                                        const iconData = await this.blobToDataURL(blob);
+                                        if (iconData) {
+                                            this.registerWebAppIcon(domain, iconData);
+                                        }
+                                    } catch (e) {
+                                        // ignore
+                                    }
+                                }
+                            }).catch(() => { });
                         }
                     }
                 }
             } catch (e) {
-                console.warn('加载 favicon 缓存失败:', e);
+                // 目录可能不存在，尝试创建
+                try {
+                    await putFile(WEBAPP_ICON_DIR, true, new Blob([]));
+                } catch (err) {
+                    // ignore
+                }
             }
 
             // 监听链接点击事件（仅在启用时）
@@ -1535,13 +1649,8 @@ export default class PluginSample extends Plugin {
                             try {
                                 const domain = this.getDomainFromUrl(href);
                                 if (!domain) return;
-                                const cache = (await this.loadData(FAVICON_CACHE_FILE)) || {};
-                                if (cache && cache[domain]) {
-                                    try {
-                                        this.registerWebAppIcon(domain, cache[domain]);
-                                    } catch (e) {
-                                        console.warn('注册本地缓存 favicon 失败:', e);
-                                    }
+
+                                if (this.domainIconMap.has(domain)) {
                                     try {
                                         tabPromise.then((tp: any) => { try { tp.icon = this.getWebAppIconId(domain); } catch (e) { } });
                                     } catch (e) { }
