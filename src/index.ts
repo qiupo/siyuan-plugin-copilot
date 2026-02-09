@@ -740,7 +740,7 @@ export default class PluginSample extends Plugin {
 
                         // 如果清理后的 UA 仍然异常（太短或缺少关键标识），回退为标准 Chrome UA
                         if (cleanUA.length < 50 || !/Chrome\//i.test(cleanUA)) {
-                            cleanUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+                            cleanUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0';
                         }
 
 
@@ -762,14 +762,7 @@ export default class PluginSample extends Plugin {
                     webview.setAttribute('useragent', userAgent);
 
                     // 设置 Accept-Language，使 webview 请求携带插件当前语言优先级
-                    try {
-                        const rawLang = getCurrentLanguage?.() || '';
-                        const language = rawLang.replace(/_/g, '-') || 'en';
-                        // 格式: Accept-Language: <language>, en;q=0.9, *;q=0.5
-                        webview.setAttribute('accept-language', `${language}, en;q=0.9, *;q=0.5`);
-                    } catch (e) {
-                        console.warn('设置 Accept-Language 失败:', e);
-                    }
+                    webview.setAttribute('accept-language', `en,en-GB;q=0.9,en-US;q=0.8,zh-CN;q=0.7,zh;q=0.6`);
 
 
                     // 最后设置 src，因为 partition 等属性必须在加载 URL 之前设置
@@ -836,6 +829,75 @@ export default class PluginSample extends Plugin {
                         }
                     });
 
+                    const openUrlInNewTab = (url: string) => {
+                        if (!url) return;
+                        // 从URL中提取域名作为初始标题
+                        let initialTitle = 'Web Link';
+                        try {
+                            const urlObj = new URL(url);
+                            initialTitle = urlObj.hostname || initialTitle;
+                        } catch (e) {
+                            console.warn('Failed to parse URL:', e);
+                        }
+
+                        // 异步获取域名图标（会缓存），获取失败则回退默认图标
+                        try {
+                            // 立即打开标签页，避免等待网络请求。后台异步检查本地缓存并更新图标（如果存在）
+                            const tabPromise = openTab({
+                                app: pluginInstance.app,
+                                custom: {
+                                    icon: "iconCopilotWebApp",
+                                    title: initialTitle,
+                                    data: {
+                                        app: {
+                                            url: url,
+                                            name: initialTitle,
+                                            id: "weblink_" + Date.now()
+                                        }
+                                    },
+                                    id: pluginInstance.name + WEBAPP_TAB_TYPE
+                                }
+                            });
+
+                            (async () => {
+                                try {
+                                    const domain = pluginInstance.getDomainFromUrl(url);
+                                    if (!domain) return;
+                                    const cache = (await pluginInstance.loadData(FAVICON_CACHE_FILE)) || {};
+                                    if (cache && cache[domain]) {
+                                        try {
+                                            pluginInstance.registerWebAppIcon(domain, cache[domain]);
+                                        } catch (e) {
+                                            console.warn('注册本地缓存 favicon 失败:', e);
+                                        }
+                                        try {
+                                            tabPromise.then((tp: any) => { try { tp.icon = pluginInstance.getWebAppIconId(domain); } catch (e) { } });
+                                        } catch (e) { }
+                                    }
+                                } catch (e) {
+                                    // 忽略错误
+                                }
+                            })();
+                        } catch (e) {
+                            console.warn('打开外部链接时图标获取异常，使用默认图标:', e);
+                            openTab({
+                                app: pluginInstance.app,
+                                custom: {
+                                    icon: "iconCopilotWebApp",
+                                    title: initialTitle,
+                                    data: {
+                                        app: {
+                                            url: url,
+                                            name: initialTitle,
+                                            id: "weblink_" + Date.now()
+                                        }
+                                    },
+                                    id: pluginInstance.name + WEBAPP_TAB_TYPE
+                                }
+                            });
+                        }
+                    };
+
                     // 监听 webview 导航事件
                     webview.addEventListener('did-navigate', (event: any) => {
                         const newUrl = event.url || webview.getURL();
@@ -896,6 +958,15 @@ export default class PluginSample extends Plugin {
                         // 加载完成后重置重定向计数器
                         redirectCount = 0;
                         updateNavigationButtons();
+                    });
+
+                    // 监听新窗口打开事件 (拦截 target="_blank" 或 window.open)
+                    webview.addEventListener('new-window', (e: any) => {
+                        e.preventDefault();
+                        const url = e.url;
+                        if (url) {
+                            openUrlInNewTab(url);
+                        }
                     });
 
                     // 监听加载失败事件
@@ -1075,88 +1146,21 @@ export default class PluginSample extends Plugin {
                         if (msg.startsWith('__SIYUAN_COPILOT_LINK__:')) {
                             const url = msg.substring('__SIYUAN_COPILOT_LINK__:'.length);
                             if (url) {
-                                // 从URL中提取域名作为初始标题
-                                let initialTitle = 'Web Link';
-                                try {
-                                    const urlObj = new URL(url);
-                                    initialTitle = urlObj.hostname || initialTitle;
-                                } catch (e) {
-                                    console.warn('Failed to parse URL:', e);
-                                }
-
-                                // 异步获取域名图标（会缓存），获取失败则回退默认图标
-                                try {
-                                    // 立即打开标签页，避免等待网络请求。后台异步检查本地缓存并更新图标（如果存在）
-                                    const tabPromise = openTab({
-                                        app: pluginInstance.app,
-                                        custom: {
-                                            icon: "iconCopilotWebApp",
-                                            title: initialTitle,
-                                            data: {
-                                                app: {
-                                                    url: url,
-                                                    name: initialTitle,
-                                                    id: "weblink_" + Date.now()
-                                                }
-                                            },
-                                            id: pluginInstance.name + WEBAPP_TAB_TYPE
-                                        }
-                                    });
-
-                                    (async () => {
-                                        try {
-                                            const domain = pluginInstance.getDomainFromUrl(url);
-                                            if (!domain) return;
-                                            const cache = (await pluginInstance.loadData(FAVICON_CACHE_FILE)) || {};
-                                            if (cache && cache[domain]) {
-                                                try {
-                                                    pluginInstance.registerWebAppIcon(domain, cache[domain]);
-                                                } catch (e) {
-                                                    console.warn('注册本地缓存 favicon 失败:', e);
-                                                }
-                                                try {
-                                                    tabPromise.then((tp: any) => { try { tp.icon = pluginInstance.getWebAppIconId(domain); } catch (e) { } });
-                                                } catch (e) { }
-                                            }
-                                        } catch (e) {
-                                            // 忽略错误
-                                        }
-                                    })();
-                                } catch (e) {
-                                    console.warn('打开外部链接时图标获取异常，使用默认图标:', e);
-                                    openTab({
-                                        app: pluginInstance.app,
-                                        custom: {
-                                            icon: "iconCopilotWebApp",
-                                            title: initialTitle,
-                                            data: {
-                                                app: {
-                                                    url: url,
-                                                    name: initialTitle,
-                                                    id: "weblink_" + Date.now()
-                                                }
-                                            },
-                                            id: pluginInstance.name + WEBAPP_TAB_TYPE
-                                        }
-                                    });
-                                }
+                                openUrlInNewTab(url);
                             }
                         }
                     });
 
-                    // 尝试在 webview 加载完成后注入键盘监听和点击拦截
-                    webview.addEventListener('dom-ready', () => {
-                        webviewReady = true; // 标记 webview 已准备好
-                        updateNavigationButtons(); // 初始化导航按钮状态
-
+                    // 注入脚本函数：监听键盘事件和点击事件
+                    const injectScript = () => {
                         try {
-                            // 注入脚本来监听 webview 内部的键盘事件和点击事件
                             const script = `
                                 (function() {
-                                    // 注入一次即可，防止重复
-                                    if (window.__siyuan_copilot_injected) return;
-                                    window.__siyuan_copilot_injected = true;
+                                    // 注入一次即可，防止重复 (使用新标记 v2 避免缓存问题)
+                                    if (window.__siyuan_copilot_injected_v2) return;
+                                    window.__siyuan_copilot_injected_v2 = true;
 
+                                    // 键盘事件监听
                                     document.addEventListener('keydown', function(e) {
                                         // Alt+← 后退
                                         if (e.altKey && e.key === 'ArrowLeft') {
@@ -1188,8 +1192,8 @@ export default class PluginSample extends Plugin {
                                         }
                                     }, true);
 
-                                    // 监听点击事件，拦截 target="_blank" 和 Ctrl+Click
-                                    document.addEventListener('click', function(e) {
+                                    // 链接点击处理函数
+                                    const handleLinkClick = function(e) {
                                         var target = e.target;
                                         // 查找最近的 a 标签
                                         while (target && target.tagName !== 'A' && target !== document) {
@@ -1197,26 +1201,65 @@ export default class PluginSample extends Plugin {
                                         }
                                         
                                         if (target && target.tagName === 'A') {
-                                            // 处理 target="_blank" 或 Ctrl+Click (Windows/Linux) 或 Cmd+Click (Mac)
-                                            var shouldOpenInNewTab = target.getAttribute('target') === '_blank' || 
+                                            // 检查是否为中键点击 (button === 1)
+                                            var isMiddleClick = e.button === 1;
+
+                                            // 处理 target="_blank" 或 Ctrl+Click (Windows/Linux) 或 Cmd+Click (Mac) 或中键点击
+                                            // 显式检查 'target' 属性是否为 '_blank'
+                                            var hasBlankTarget = target.getAttribute('target') === '_blank';
+                                            
+                                            var shouldOpenInNewTab = hasBlankTarget || 
                                                                       e.ctrlKey || 
-                                                                      e.metaKey;
+                                                                      e.metaKey || 
+                                                                      isMiddleClick;
                                             
                                             if (shouldOpenInNewTab && target.href) {
+                                                // 极力阻止默认行为
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                // 使用 console.log 传递消息，这在 Electron webview 中通常更可靠
+                                                e.stopImmediatePropagation();
+                                                
+                                                // 使用 console.log 传递消息
                                                 console.log('__SIYUAN_COPILOT_LINK__:' + target.href);
+                                                return false;
                                             }
                                         }
-                                    }, true);
+                                    };
+
+                                    // 监听点击事件 (捕获阶段)
+                                    document.addEventListener('click', handleLinkClick, true);
+                                    // 监听辅助点击事件 (如中键)
+                                    document.addEventListener('auxclick', handleLinkClick, true);
                                 })();
                             `;
                             webview.executeJavaScript(script);
                         } catch (err) {
-                            console.warn('无法注入键盘监听脚本:', err);
+                            console.warn('无法注入监听脚本:', err);
                         }
+                    };
+
+                    // 尝试在 webview 加载完成后注入键盘监听和点击拦截
+                    webview.addEventListener('dom-ready', () => {
+                        webviewReady = true; // 标记 webview 已准备好
+
+                        // 尝试移除可能的 CSP 限制 (仅作为防御性编程，可能在某些 Electron 环境不起作用)
+                        // webview.executeJavaScript... 
+
+                        injectScript();
+                        updateNavigationButtons(); // 初始化导航按钮状态
                     });
+
+                    // 在页面开始加载时也尝试注入 (针对部分已存在内容的页面或 SPA 切换)
+                    webview.addEventListener('did-start-loading', () => {
+                        // 此时注入可能因为页面刷新而被冲掉，但对于 SPA 路由跳转有效
+                        updateNavigationButtons();
+                    });
+
+                    // 在导航完成后再次注入，确保万无一失
+                    webview.addEventListener('did-navigate', () => {
+                        injectScript();
+                    });
+
                 }
             },
             beforeDestroy() {
