@@ -23,7 +23,7 @@
     }
 
     const builtInProviderNames: Record<string, string> = {
-        v3: t('platform.builtIn.v3'),
+        Achuan: t('platform.builtIn.Achuan'),
         gemini: t('platform.builtIn.gemini'),
         openai: t('platform.builtIn.openai'),
         deepseek: t('platform.builtIn.deepseek'),
@@ -33,22 +33,22 @@
 
     // 内置平台的默认 API 地址
     const builtInProviderDefaultUrls: Record<string, string> = {
+        Achuan: 'https://gpt.achuan-2.top/',
         gemini: 'https://generativelanguage.googleapis.com',
         deepseek: 'https://api.deepseek.com',
         moonshot: 'https://api.moonshot.cn',
         openai: 'https://api.openai.com',
         volcano: 'https://ark.cn-beijing.volces.com',
-        v3: 'https://api.v3.cm',
     };
 
     // 内置平台的官网链接
     const builtInProviderWebsites: Record<string, string> = {
+        Achuan: 'https://gpt.achuan-2.top/register?aff=ZndO',
         gemini: 'https://aistudio.google.com/apikey',
         deepseek: 'https://platform.deepseek.com/',
         moonshot: 'https://platform.moonshot.cn/',
         openai: 'https://platform.openai.com/',
         volcano: 'https://console.volcengine.com/ark',
-        v3: 'https://api.gpt.ge/register?aff=fQIZ',
     };
 
     // 当前选中的平台ID
@@ -274,6 +274,17 @@
                         step: 1,
                     },
                 },
+                {
+                    key: 'multiModelViewMode',
+                    value: settings.multiModelViewMode,
+                    type: 'select',
+                    title: t('settings.multiModelViewMode.title'),
+                    description: t('settings.multiModelViewMode.description'),
+                    options: {
+                        tab: t('settings.multiModelViewMode.options.tab'),
+                        card: t('settings.multiModelViewMode.options.card'),
+                    },
+                },
             ],
         },
         {
@@ -305,7 +316,67 @@
                     value: settings.autoRenameSession,
                     type: 'checkbox',
                     title: t('settings.autoRenameSession.title') || '会话自动重命名',
-                    description: t('settings.autoRenameSession.description') || '在首次发送消息时，自动使用AI生成会话标题',
+                    description:
+                        t('settings.autoRenameSession.description') ||
+                        '在首次发送消息时，自动使用AI生成会话标题',
+                },
+            ],
+        },
+        {
+            name: t('settings.settingsGroup.webApp') || '网页小程序',
+            items: [
+                {
+                    key: 'openLinksInWebView',
+                    value: settings.openLinksInWebView,
+                    type: 'checkbox',
+                    title: t('settings.openLinksInWebView.title') || '在 WebView 中打开链接',
+                    description:
+                        t('settings.openLinksInWebView.description') ||
+                        '点击思源笔记中的 https 链接时，在内置 WebView 标签页中打开，而不是外部浏览器',
+                },
+                {
+                    key: 'searchEngine',
+                    value: settings.searchEngine,
+                    type: 'select',
+                    title: t('settings.searchEngine.title') || '搜索引擎',
+                    description:
+                        t('settings.searchEngine.description') || '选择地址栏使用的默认搜索引擎',
+                    options: {
+                        google: 'Google',
+                        bing: 'Bing',
+                    },
+                },
+            ],
+        },
+        {
+            name: t('settings.settingsGroup.translate') || '翻译设置',
+            items: [
+                {
+                    key: 'translateTemperature',
+                    value: settings.translateTemperature,
+                    type: 'number',
+                    title: t('settings.translate.temperature.title') || '翻译 Temperature',
+                    description:
+                        t('settings.translate.temperature.description') ||
+                        '翻译专用的 temperature 参数（0-2），为空则使用模型默认值。值越小，翻译越准确一致；值越大，翻译越灵活多样',
+                    number: {
+                        min: 0,
+                        max: 2,
+                        step: 0.1,
+                    },
+                },
+                {
+                    key: 'translatePrompt',
+                    value: settings.translatePrompt,
+                    type: 'textarea',
+                    title: t('settings.translate.prompt.title') || '翻译提示词',
+                    description:
+                        t('settings.translate.prompt.description') ||
+                        '翻译时使用的提示词模板，${content} 会被替换为要翻译的内容',
+                    direction: 'row',
+                    rows: 8,
+                    placeholder:
+                        t('settings.translate.prompt.placeholder') || '输入翻译提示词模板...',
                 },
             ],
         },
@@ -362,15 +433,16 @@
 
                         <p style="margin-top:12px;">我需要的功能我会慢慢改进（打赏可以催更），有些我觉得可以改进、但是现阶段不必要的功能需要打赏才改进（会标注打赏标签和需要打赏金额），而不需要的功能、实现很麻烦的功能会直接关闭issue不考虑实现，我没实现的功能欢迎有大佬来pr</p>
 
-                        <p style="margin-top:12px;">累积赞赏50元的朋友如果想加我微信，可以在赞赏的时候备注微信号，或者发邮件到<a href="mailto:achuan-2@outlook.com">achuan-2@outlook.com</a>来进行好友申请</p>
-
+                        <p style="margin-top:12px;">累积赞赏50元的朋友如果想加我微信和进粉丝交流群，可以在赞赏的时候备注微信号，或者发邮件到<a href="mailto:achuan-2@outlook.com">achuan-2@outlook.com</a>来进行好友申请</p>
+                        
                         <div style="margin-top:12px;">
-                            <img src="plugins/siyuan-plugin-copilot/assets/donate.png" alt="donate" style="max-width:260px; height:auto; border:1px solid var(--b3-border-color);"/>
+                        <img src="plugins/siyuan-plugin-copilot/assets/donate.png" alt="donate" style="max-width:260px; height:auto; border:1px solid var(--b3-border-color);"/>
                         </div>
+                        <p style="margin-top:12px;">也欢迎大家使用我的<a href="https://gpt.achuan-2.top/register?aff=ZndO">AI API中转站</a>，提供Openai ChatGPT、Gemini、Claude、Deepseek、Grok等API直连中转服务，只要用户注册我就有收益</p>
                     `,
                 },
             ],
-        }
+        },
     ];
 
     let focusGroup = groups[0].name;
@@ -383,8 +455,9 @@
 
     const onChanged = ({ detail }: CustomEvent<ChangeEvent>) => {
         console.log(detail.key, detail.value);
-        const setting = settings[detail.key];
-        if (setting !== undefined) {
+        // 使用 in 操作符检查 key 是否存在，而不是检查值是否为 undefined
+        // 这样可以正确处理值为 undefined 的设置项（如 translateTemperature）
+        if (detail.key in settings) {
             settings[detail.key] = detail.value;
             saveSettings();
         }
@@ -410,13 +483,20 @@
                 openai: { apiKey: '', customApiUrl: '', models: [] },
                 moonshot: { apiKey: '', customApiUrl: '', models: [] },
                 volcano: { apiKey: '', customApiUrl: '', models: [] },
-                v3: { apiKey: '', customApiUrl: '', models: [] },
+                Achuan: { apiKey: '', customApiUrl: '', models: [] },
                 customProviders: [],
             };
         }
 
         // 确保每个内置平台都存在（支持旧配置升级）
-        const builtInPlatformIds = ['gemini', 'deepseek', 'openai', 'moonshot', 'volcano', 'v3'];
+        const builtInPlatformIds = [
+            'Achuan',
+            'gemini',
+            'deepseek',
+            'openai',
+            'moonshot',
+            'volcano',
+        ];
         for (const platformId of builtInPlatformIds) {
             if (!settings.aiProviders[platformId]) {
                 settings.aiProviders[platformId] = { apiKey: '', customApiUrl: '', models: [] };
@@ -657,7 +737,7 @@
                     display={true}
                     on:changed={onChanged}
                 />
-                
+
                 {#if settings.autoRenameSession}
                     <div class="auto-rename-model-selector">
                         <div class="config__item">
@@ -666,10 +746,14 @@
                                     {t('settings.autoRenameSession.modelTitle') || '重命名模型'}
                                 </div>
                                 <div class="config__item-description">
-                                    {t('settings.autoRenameSession.modelDescription') || '选择用于生成会话标题的AI模型'}
+                                    {t('settings.autoRenameSession.modelDescription') ||
+                                        '选择用于生成会话标题的AI模型'}
                                 </div>
                             </div>
-                            <div class="config__item-control" style="display: flex; gap: 8px; align-items: center;">
+                            <div
+                                class="config__item-control"
+                                style="display: flex; gap: 8px; align-items: center;"
+                            >
                                 <select
                                     class="b3-select"
                                     bind:value={settings.autoRenameProvider}
@@ -678,35 +762,45 @@
                                         saveSettings();
                                     }}
                                 >
-                                    <option value="">{t('settings.autoRenameSession.selectProvider') || '-- 选择平台 --'}</option>
+                                    <option value="">
+                                        {t('settings.autoRenameSession.selectProvider') ||
+                                            '-- 选择平台 --'}
+                                    </option>
                                     {#each allProviderOptions as provider}
                                         {#if settings.aiProviders[provider.id]?.models?.length > 0 || (provider.type === 'custom' && settings.aiProviders.customProviders.find(p => p.id === provider.id)?.models?.length > 0)}
                                             <option value={provider.id}>{provider.name}</option>
                                         {/if}
                                     {/each}
                                 </select>
-                                
+
                                 {#if settings.autoRenameProvider}
                                     <select
                                         class="b3-select"
                                         bind:value={settings.autoRenameModelId}
                                         on:change={saveSettings}
                                     >
-                                        <option value="">{t('settings.autoRenameSession.selectModel') || '-- 选择模型 --'}</option>
+                                        <option value="">
+                                            {t('settings.autoRenameSession.selectModel') ||
+                                                '-- 选择模型 --'}
+                                        </option>
                                         {#if builtInProviderNames[settings.autoRenameProvider]}
                                             {#each settings.aiProviders[settings.autoRenameProvider]?.models || [] as model}
-                                                <option value={model.id}>{model.name || model.id}</option>
+                                                <option value={model.id}>
+                                                    {model.name || model.id}
+                                                </option>
                                             {/each}
                                         {:else}
                                             {#each settings.aiProviders.customProviders.find(p => p.id === settings.autoRenameProvider)?.models || [] as model}
-                                                <option value={model.id}>{model.name || model.id}</option>
+                                                <option value={model.id}>
+                                                    {model.name || model.id}
+                                                </option>
                                             {/each}
                                         {/if}
                                     </select>
                                 {/if}
                             </div>
                         </div>
-                        
+
                         <!-- 自定义提示词 -->
                         <div class="config__item" style="margin-top: 16px;">
                             <div class="config__item-label">
@@ -714,7 +808,8 @@
                                     {t('settings.autoRenameSession.promptTitle') || '自定义提示词'}
                                 </div>
                                 <div class="config__item-description">
-                                    {t('settings.autoRenameSession.promptDescription') || '自定义生成会话标题的提示词，使用 {message} 作为用户消息的占位符'}
+                                    {t('settings.autoRenameSession.promptDescription') ||
+                                        '自定义生成会话标题的提示词，使用 {message} 作为用户消息的占位符'}
                                 </div>
                             </div>
                             <div class="config__item-control">
@@ -723,7 +818,10 @@
                                     rows="4"
                                     bind:value={settings.autoRenamePrompt}
                                     on:change={saveSettings}
-                                    placeholder={t('settings.autoRenameSession.promptPlaceholder') || '请根据以下用户消息生成一个简洁的会话标题（不超过20个字，不要使用引号）：\n\n{message}'}
+                                    placeholder={t(
+                                        'settings.autoRenameSession.promptPlaceholder'
+                                    ) ||
+                                        '请根据以下用户消息生成一个简洁的会话标题（不超过20个字，不要使用引号）：\n\n{message}'}
                                 ></textarea>
                             </div>
                         </div>
@@ -941,12 +1039,12 @@
         display: flex;
         gap: 8px;
         align-items: center;
-        
+
         .b3-select {
             flex: 1;
             min-width: 0;
         }
-        
+
         textarea.b3-text-field {
             width: 100%;
             min-height: 80px;
@@ -955,7 +1053,7 @@
             line-height: 1.6;
             font-family: var(--b3-font-family);
             resize: vertical;
-            
+
             &::placeholder {
                 color: var(--b3-theme-on-surface-light);
                 opacity: 0.6;

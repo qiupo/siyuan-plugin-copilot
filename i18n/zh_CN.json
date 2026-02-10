@@ -10,6 +10,8 @@
             "noteExport": "对话导出",
             "sessionManagement": "会话管理",
             "mcpServers": "MCP 服务配置",
+            "webApp": "网页小程序",
+            "translate": "翻译设置",
             "group1": "页签1",
             "group2": "页签2",
             "reset": "重置设置"
@@ -68,6 +70,14 @@
         "messageFontSize": {
             "title": "消息字体大小",
             "description": "调整消息内容的字体大小（默认12px）"
+        },
+        "multiModelViewMode": {
+            "title": "多模型回答样式",
+            "description": "选择多模型回答的默认显示方式",
+            "options": {
+                "tab": "页签视图",
+                "card": "卡片视图"
+            }
         },
         "exportNotebook": {
             "title": "导出笔记本",
@@ -128,6 +138,21 @@
             "promptTitle": "自定义提示词",
             "promptDescription": "自定义生成会话标题的提示词，使用 {message} 作为用户消息的占位符",
             "promptPlaceholder": "请根据以下用户消息生成一个简洁的会话标题（不超过20个字，不要使用引号）：\n\n{message}"
+        },
+        "openLinksInWebView": {
+            "title": "在 WebView 中打开链接",
+            "description": "点击思源笔记中的 https 链接时，在内置 WebView 标签页中打开，而不是外部浏览器"
+        },
+        "translate": {
+            "temperature": {
+                "title": "翻译 Temperature",
+                "description": "翻译专用的 temperature 参数（0-2），为空则使用模型默认值。值越小，翻译越准确一致；值越大，翻译越灵活多样"
+            },
+            "prompt": {
+                "title": "翻译提示词",
+                "description": "翻译时使用的提示词模板，${content} 会被替换为要翻译的内容",
+                "placeholder": "输入翻译提示词模板..."
+            }
         }
     },
     "aiSidebar": {
@@ -203,6 +228,27 @@
             "applied": "已应用",
             "rejected": "已拒绝"
         },
+        "translate": {
+            "title": "翻译",
+            "openDialog": "打开翻译对话框",
+            "inputLanguage": "输入语言",
+            "outputLanguage": "输出语言",
+            "inputText": "输入文本",
+            "outputText": "翻译结果",
+            "inputPlaceholder": "请输入要翻译的文本...",
+            "outputPlaceholder": "翻译结果将显示在这里...",
+            "auto": "自动检测",
+            "swap": "交换语言",
+            "translate": "翻译",
+            "clear": "清空",
+            "cancel": "取消",
+            "history": "翻译历史",
+            "noHistory": "暂无翻译历史",
+            "emptyInput": "请输入要翻译的文本",
+            "noModel": "请选择翻译模型",
+            "noConfig": "未找到模型配置",
+            "error": "翻译失败"
+        },
         "modelSettings": {
             "title": "预设设置",
             "contextCount": "上下文消息数",
@@ -251,7 +297,9 @@
             "editPreset": "编辑预设",
             "searchModels": "搜索模型",
             "searchPresets": "搜索预设",
-            "noResults": "无匹配结果"
+            "noResults": "无匹配结果",
+            "unsavedChanges": "未保存的更改",
+            "confirmClose": "您有未保存的更改，是否保存预设？"
         },
         "input": {
             "placeholder": "输入消息... (可拖入文档、块或粘贴图片)"
@@ -417,8 +465,8 @@
             "moonshot": "月之暗面 (Kimi)",
             "openai": "OpenAI",
             "volcano": "火山引擎",
-            "v3": "V3 API",
-            "v3Description": "为您提供稳定可靠的Openai ChatGPT、Gemini、Claude、Deepseek、Grok等API直连中转服务"
+            "Achuan": "A API",
+            "AchuanDescription": "为您提供稳定可靠的Openai ChatGPT、Gemini、Claude、Deepseek、Grok等API直连中转服务，支持nanobanana生图模型（gemini-3-pro-image-preview）。人民币:美刀=0.6:1，注册即送$0.2试用额度。"
         },
         "select": "请选择平台",
         "selectHint": "请选择一个平台以查看或编辑其配置",
@@ -523,6 +571,8 @@
         "thinking": "思考",
         "vision": "视觉",
         "imageGeneration": "生图",
+        "toolCalling": "工具调用",
+        "webSearch": "联网搜索",
         "noMatch": "没有找到匹配的模型",
         "fetching": "正在获取模型列表..."
     },
@@ -634,6 +684,10 @@
             "medium": "中",
             "high": "高"
         }
+    },
+    "webSearch": {
+        "enabled": "联网搜索已启用",
+        "disabled": "联网搜索已禁用"
     },
     "fullscreen": {
         "title": "全屏查看",

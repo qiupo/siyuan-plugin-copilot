@@ -11,6 +11,8 @@
             "noteExport": "Chat Export",
             "sessionManagement": "Session Management",
             "mcpServers": "MCP Servers",
+            "webApp": "Web App",
+            "translate": "Translation Settings",
             "group1": "Tab1",
             "group2": "Tab2",
             "reset": "Reset Settings"
@@ -69,6 +71,14 @@
         "messageFontSize": {
             "title": "Message Font Size",
             "description": "Adjust the font size of message content (default 12px)"
+        },
+        "multiModelViewMode": {
+            "title": "Multi-Model Response Style",
+            "description": "Choose the default display style for multi-model responses",
+            "options": {
+                "tab": "Tab View",
+                "card": "Card View"
+            }
         },
         "exportNotebook": {
             "title": "Export Notebook",
@@ -130,6 +140,21 @@
             "promptTitle": "Custom Prompt",
             "promptDescription": "Customize the prompt for generating session titles. Use {message} as a placeholder for the user message",
             "promptPlaceholder": "Generate a concise session title (max 20 characters, no quotes) based on the following user message:\n\n{message}"
+        },
+        "openLinksInWebView": {
+            "title": "Open Links in WebView",
+            "description": "When clicking https links in SiYuan notes, open them in built-in WebView tabs instead of external browser"
+        },
+        "translate": {
+            "temperature": {
+                "title": "Translation Temperature",
+                "description": "Temperature parameter for translation (0-2). Leave empty to use model default. Lower values make translation more accurate and consistent; higher values make it more flexible and diverse"
+            },
+            "prompt": {
+                "title": "Translation Prompt",
+                "description": "Prompt template for translation, ${content} will be replaced with the content to translate",
+                "placeholder": "Enter translation prompt template..."
+            }
         }
     },
     "aiSidebar": {
@@ -205,6 +230,27 @@
             "applied": "Applied",
             "rejected": "Rejected"
         },
+        "translate": {
+            "title": "Translation",
+            "openDialog": "Open Translation Dialog",
+            "inputLanguage": "Input Language",
+            "outputLanguage": "Output Language",
+            "inputText": "Input Text",
+            "outputText": "Translation Result",
+            "inputPlaceholder": "Enter text to translate...",
+            "outputPlaceholder": "Translation result will appear here...",
+            "auto": "Auto Detect",
+            "swap": "Swap Languages",
+            "translate": "Translate",
+            "clear": "Clear",
+            "cancel": "Cancel",
+            "history": "Translation History",
+            "noHistory": "No translation history",
+            "emptyInput": "Please enter text to translate",
+            "noModel": "Please select a translation model",
+            "noConfig": "Model configuration not found",
+            "error": "Translation failed"
+        },
         "modelSettings": {
             "title": "Model Settings",
             "contextCount": "Context Message Count",
@@ -250,7 +296,12 @@
             "presetMenu": "Preset Menu",
             "enableThinking": "Thinking",
             "createNewPreset": "New Preset",
-            "editPreset": "Edit Preset"
+            "editPreset": "Edit Preset",
+            "searchModels": "Search Models",
+            "searchPresets": "Search Presets",
+            "noResults": "No matching results",
+            "unsavedChanges": "Unsaved Changes",
+            "confirmClose": "You have unsaved changes. Do you want to save the preset?"
         },
         "input": {
             "placeholder": "Type a message... (drag docs, blocks or paste images)"
@@ -416,7 +467,7 @@
             "moonshot": "Moonshot(Kimi)",
             "openai": "OpenAI",
             "volcano": "Volcano Engine",
-            "v3": "V3 API",
+            "Achuan": "A API",
             "v3Description": "Providing stable and reliable API direct connection relay services for OpenAI ChatGPT, Gemini, Claude, Deepseek, Grok, etc."
         },
         "select": "Please select platform",
@@ -521,6 +572,8 @@
         "thinking": "Thinking Mode",
         "vision": "Vision",
         "imageGeneration": "Image Gen",
+        "toolCalling": "Tool Calling",
+        "webSearch": "Web Search",
         "noMatch": "No matching models found",
         "fetching": "Fetching model list..."
     },
@@ -632,6 +685,10 @@
             "medium": "medium",
             "high": "high"
         }
+    },
+    "webSearch": {
+        "enabled": "Web search enabled",
+        "disabled": "Web search disabled"
     },
     "fullscreen": {
         "title": "Fullscreen View",

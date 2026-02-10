@@ -4,6 +4,7 @@
     import { pushMsg, pushErrMsg } from '../api';
     import type { ProviderConfig, ModelConfig } from '../defaultSettings';
     import { t } from '../utils/i18n';
+    import { getModelCapabilities } from '../utils/modelCapabilities';
 
     export let providerId: string;
     export let providerName: string;
@@ -13,7 +14,7 @@
     export let isCustomProvider: boolean = false; // 是否为自定义平台
 
     // 内置平台列表（不需要自定义参数）
-    const builtInProviders = ['gemini', 'deepseek', 'openai', 'moonshot', 'volcano', 'v3'];
+    const builtInProviders = ['Achuan', 'gemini', 'deepseek', 'openai', 'moonshot', 'volcano'];
     $: isBuiltInProvider = builtInProviders.includes(providerId);
 
     const dispatch = createEventDispatcher();
@@ -203,11 +204,17 @@
             return;
         }
 
+        // 自动检测模型能力
+        const capabilities = getModelCapabilities(modelId);
+
         const newModel: ModelConfig = {
             id: modelId,
             name: modelName,
-            temperature: 0.7,
+            temperature: 1,
             maxTokens: -1,
+            capabilities: capabilities,
+            thinkingEnabled: false, // 默认不开启思考模式
+            thinkingEffort: 'medium', // 默认思考强度
         };
 
         config.models = [...config.models, newModel];
@@ -248,6 +255,16 @@
         config.models = config.models.filter(m => m.id !== modelId);
         dispatch('change');
         pushMsg('已删除模型');
+    }
+
+    // 切换模型添加/删除状态
+    function toggleModel(modelId: string, modelName: string) {
+        const isAdded = config.models.some(m => m.id === modelId);
+        if (isAdded) {
+            removeModel(modelId);
+        } else {
+            addModel(modelId, modelName);
+        }
     }
 
     // 更新模型配置
@@ -302,6 +319,21 @@
     $: if (!isEditingName) {
         editingName = providerName;
     }
+
+    // 获取模型能力的 emoji 字符串
+    function getModelCapabilitiesEmoji(modelId: string): string {
+        const capabilities = getModelCapabilities(modelId);
+        if (!capabilities || Object.keys(capabilities).length === 0) return '';
+
+        const emojis: string[] = [];
+        if (capabilities.thinking) emojis.push('💡');
+        if (capabilities.vision) emojis.push('👀');
+        if (capabilities.imageGeneration) emojis.push('🖼️');
+        if (capabilities.toolCalling) emojis.push('🛠️');
+        if (capabilities.webSearch) emojis.push('🌐');
+
+        return emojis.length > 0 ? ' ' + emojis.join(' ') : '';
+    }
 </script>
 
 <div class="provider-config">
@@ -348,9 +380,23 @@
                         </a>
                     {/if}
                 </div>
-                {#if providerId === 'v3'}
+                {#if providerId === 'Achuan'}
                     <div class="provider-description">
-                        {t('platform.builtIn.v3Description')}
+                        {t('platform.builtIn.AchuanDescription')}
+                    </div>
+                    <div style="margin-top:6px;">
+                        <a
+                            href="https://achuan-2.apifox.cn/doc-8155570"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="platform-link"
+                            title="Achuan API 使用帮助"
+                        >
+                            <svg class="b3-button__icon">
+                                <use xlink:href="#iconHelp"></use>
+                            </svg>
+                            <span>帮助指南</span>
+                        </a>
                     </div>
                 {/if}
             </div>
@@ -514,16 +560,23 @@
                             {#each filteredModels.slice(0, 200) as model}
                                 <div class="model-search-item">
                                     <div class="model-search-item__info">
-                                        <span class="model-search-item__name">{model.name}</span>
+                                        <span class="model-search-item__name">
+                                            {model.name}{getModelCapabilitiesEmoji(model.id)}
+                                        </span>
                                         <span class="model-search-item__id">{model.id}</span>
                                     </div>
                                     <button
-                                        class="b3-button b3-button--text"
-                                        on:click={() => addModel(model.id, model.name)}
-                                        disabled={config.models.some(m => m.id === model.id)}
+                                        class="b3-button"
+                                        class:b3-button--text={!config.models.some(
+                                            m => m.id === model.id
+                                        )}
+                                        class:b3-button--cancel={config.models.some(
+                                            m => m.id === model.id
+                                        )}
+                                        on:click={() => toggleModel(model.id, model.name)}
                                     >
                                         {config.models.some(m => m.id === model.id)
-                                            ? t('models.alreadyAdded')
+                                            ? t('models.remove') || '移除'
                                             : t('models.add')}
                                     </button>
                                 </div>
@@ -590,6 +643,102 @@
                                     updateModel(model.id, 'maxTokens', model.maxTokens)}
                             />
                         </div>
+                        <div class="model-config-item">
+                            <span>{t('models.capabilities')}</span>
+                            <div class="model-capabilities">
+                                <label class="">
+                                    <input
+                                        type="checkbox"
+                                        class="b3-switch"
+                                        checked={model.capabilities?.thinking || false}
+                                        on:change={e => {
+                                            if (!model.capabilities) model.capabilities = {};
+                                            model.capabilities.thinking = e.currentTarget.checked;
+                                            updateModel(
+                                                model.id,
+                                                'capabilities',
+                                                model.capabilities
+                                            );
+                                        }}
+                                    />
+                                    <span class="capability-label">💡 {t('models.thinking')}</span>
+                                </label>
+                                <label class="">
+                                    <input
+                                        type="checkbox"
+                                        class="b3-switch"
+                                        checked={model.capabilities?.vision || false}
+                                        on:change={e => {
+                                            if (!model.capabilities) model.capabilities = {};
+                                            model.capabilities.vision = e.currentTarget.checked;
+                                            updateModel(
+                                                model.id,
+                                                'capabilities',
+                                                model.capabilities
+                                            );
+                                        }}
+                                    />
+                                    <span class="capability-label">👀 {t('models.vision')}</span>
+                                </label>
+                                <label class="">
+                                    <input
+                                        type="checkbox"
+                                        class="b3-switch"
+                                        checked={model.capabilities?.imageGeneration || false}
+                                        on:change={e => {
+                                            if (!model.capabilities) model.capabilities = {};
+                                            model.capabilities.imageGeneration =
+                                                e.currentTarget.checked;
+                                            updateModel(
+                                                model.id,
+                                                'capabilities',
+                                                model.capabilities
+                                            );
+                                        }}
+                                    />
+                                    <span class="capability-label">
+                                        🖼️ {t('models.imageGeneration')}
+                                    </span>
+                                </label>
+                                <label class="">
+                                    <input
+                                        type="checkbox"
+                                        class="b3-switch"
+                                        checked={model.capabilities?.toolCalling || false}
+                                        on:change={e => {
+                                            if (!model.capabilities) model.capabilities = {};
+                                            model.capabilities.toolCalling =
+                                                e.currentTarget.checked;
+                                            updateModel(
+                                                model.id,
+                                                'capabilities',
+                                                model.capabilities
+                                            );
+                                        }}
+                                    />
+                                    <span class="capability-label">
+                                        🛠️ {t('models.toolCalling')}
+                                    </span>
+                                </label>
+                                <label class="">
+                                    <input
+                                        type="checkbox"
+                                        class="b3-switch"
+                                        checked={model.capabilities?.webSearch || false}
+                                        on:change={e => {
+                                            if (!model.capabilities) model.capabilities = {};
+                                            model.capabilities.webSearch = e.currentTarget.checked;
+                                            updateModel(
+                                                model.id,
+                                                'capabilities',
+                                                model.capabilities
+                                            );
+                                        }}
+                                    />
+                                    <span class="capability-label">🌐 {t('models.webSearch')}</span>
+                                </label>
+                            </div>
+                        </div>
                         <!-- 自定义参数设置（所有平台都显示，默认折叠） -->
                         <div class="model-config-item">
                             <button
@@ -639,6 +788,7 @@
                                         style="width: 100%; height: 80px; resize: vertical; font-family: monospace; font-size: 12px;"
                                         value={model.customBody || ''}
                                         placeholder={'支持嵌套 JSON，例如：\n{\n  "key": "value",\n  "nested": { "a": 1 }\n}'}
+                                        spellcheck={false}
                                         on:input={e =>
                                             handleCustomBodyChange(model.id, e.currentTarget.value)}
                                     />
@@ -649,65 +799,6 @@
                                     {/if}
                                 </div>
                             {/if}
-                        </div>
-                        <div class="model-config-item">
-                            <span>{t('models.capabilities')}</span>
-                            <div class="model-capabilities">
-                                <label class="">
-                                    <input
-                                        type="checkbox"
-                                        class="b3-switch"
-                                        checked={model.capabilities?.thinking || false}
-                                        on:change={e => {
-                                            if (!model.capabilities) model.capabilities = {};
-                                            model.capabilities.thinking = e.currentTarget.checked;
-                                            updateModel(
-                                                model.id,
-                                                'capabilities',
-                                                model.capabilities
-                                            );
-                                        }}
-                                    />
-                                    <span class="capability-label">{t('models.thinking')}</span>
-                                </label>
-                                <label class="">
-                                    <input
-                                        type="checkbox"
-                                        class="b3-switch"
-                                        checked={model.capabilities?.vision || false}
-                                        on:change={e => {
-                                            if (!model.capabilities) model.capabilities = {};
-                                            model.capabilities.vision = e.currentTarget.checked;
-                                            updateModel(
-                                                model.id,
-                                                'capabilities',
-                                                model.capabilities
-                                            );
-                                        }}
-                                    />
-                                    <span class="capability-label">{t('models.vision')}</span>
-                                </label>
-                                <label class="">
-                                    <input
-                                        type="checkbox"
-                                        class="b3-switch"
-                                        checked={model.capabilities?.imageGeneration || false}
-                                        on:change={e => {
-                                            if (!model.capabilities) model.capabilities = {};
-                                            model.capabilities.imageGeneration =
-                                                e.currentTarget.checked;
-                                            updateModel(
-                                                model.id,
-                                                'capabilities',
-                                                model.capabilities
-                                            );
-                                        }}
-                                    />
-                                    <span class="capability-label">
-                                        {t('models.imageGeneration')}
-                                    </span>
-                                </label>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -1009,8 +1100,16 @@
 
     .model-capabilities {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-top: 4px;
+
+        label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            white-space: nowrap;
+        }
 
         .capability-label {
             font-size: 12px;

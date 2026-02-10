@@ -25,10 +25,12 @@
 见[CHANGELOG.md](https://cdn.jsdelivr.net/gh/Achuan-2/siyuan-plugin-copilot@main/CHANGELOG.md)
 
 博客
-- [思源笔记Copilot插件用法分享：多模型同时回答](https://zhuanlan.zhihu.com/p/1972794055470633397)
+- [思源笔记 Copilot 插件用法分享：多模型同时回答](https://zhuanlan.zhihu.com/p/1972794055470633397)
 - [思源笔记 Copilot 插件 v0.7.0：支持会话重命名标题，AI 自动生成标题](https://zhuanlan.zhihu.com/p/1983095685197873937)
 - [思源笔记 Copilot 插件 v0.8.0：预设支持选择模型，支持根据场景快速切换模型](https://zhuanlan.zhihu.com/p/1983121374013842503)
-- [思源笔记Copilot插件 v1.2.0：支持nanobanana生图和编辑图片](https://zhuanlan.zhihu.com/p/2000977023364011834)
+- [思源笔记 Copilot 插件 v1.2.0：支持nanobanana生图和编辑图片](https://zhuanlan.zhihu.com/p/2000977023364011834)
+- [思源笔记 Copilot 插件如何使用Achuan-2 API](https://zhuanlan.zhihu.com/p/2002765436090093989)
+- [思源笔记 Copilot 插件 v1.6.0：新增网页小程序、快捷翻译对话框](https://zhuanlan.zhihu.com/p/2003514802849485761)
 
 ## ✨主要功能介绍
 
@@ -44,11 +46,11 @@
 - 支持独立配置每个模型的参数（温度、最大 tokens）
 - 标识模型特殊能力（思考模式、视觉支持）
 
-<img alt="image" src="https://assets.b3logfile.com/siyuan/1610205759005/assets/image-20260118224932-h84zc74.png" />
+<img alt="image" src="https://assets.b3logfile.com/siyuan/1610205759005/assets/image-20260204180535-27ex0wd.png" />
+
 
 <img alt="image" src="https://assets.b3logfile.com/siyuan/1610205759005/assets/image-20260118225029-2f5k1mt.png" />
 
-> 我自己主要用GPT5、Gemini 3.0、Claude 4.5 sonnet比较多，我使用的是[V3 API中转站](https://api.gpt.ge/register?aff=fQIZ)，按量付费，各个AI模型都能使用，比用官方的API能省不少钱，使用我的[邀请链接](https://api.gpt.ge/register?aff=fQIZ)注册可以获得$0.3余额奖励试用。
 
 ### 多模态支持
 
@@ -117,9 +119,8 @@
 
 ## **注意事项**
 
-使用本插件需要自备 AI 平台的 API 密钥，插件本身不提供 AI 服务。请遵守各平台的使用条款和隐私政策。
+使用本插件需要自备 AI 平台的 API 密钥，插件本身不提供 AI 服务。请遵守各平台的使用条款和隐私政策，以及法律法规。
 
-> 如果有需要使用GPT、Gemini、Claude等国外顶级模型的朋友，推荐[V3 API网站](https://api.gpt.ge/register?aff=fQIZ)，非常好用，按量付费，各个AI模型都能使用，比用官方的API能省不少钱，使用我的[邀请链接](https://api.gpt.ge/register?aff=fQIZ)注册可以获得$0.3余额奖励试用。
 
 ## 🔧 开发相关
 
@@ -137,7 +138,8 @@ GPL3 License
 ## 🙏 致谢
 
 - 基于 [plugin-sample-vite-svelte](https://github.com/siyuan-note/plugin-sample-vite-svelte/) 模板开发
-- 参考了 [sy-f-misc](https://github.com/frostime/sy-f-misc)的GPT对话功能实现
+- 参考了[sy-f-misc](https://github.com/frostime/sy-f-misc)的GPT对话功能实现
+- 参考了[cherry studio](https://github.com/CherryHQ/cherry-studio)的功能设计和交互设计
 
 ## ❤️项目贡献者
 
