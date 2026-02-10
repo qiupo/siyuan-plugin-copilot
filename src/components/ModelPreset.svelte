@@ -24,6 +24,7 @@
         }>,
         enableMultiModel: false,
         chatMode: 'ask' as 'ask' | 'edit' | 'agent',
+        modelThinkingSettings: {} as Record<string, { thinkingEnabled: boolean; thinkingEffort: ThinkingEffort }>,
     };
     export let plugin: any;
 
@@ -56,6 +57,7 @@
     }> = [];
     let tempEnableMultiModel = false;
     let tempChatMode: 'ask' | 'edit' | 'agent' = 'ask';
+    let tempModelThinkingSettings: Record<string, { thinkingEnabled: boolean; thinkingEffort: ThinkingEffort }> = {};
 
     // 当前正在编辑的预设ID（空字符串表示新建/默认）
     let editingPresetId = '';
@@ -79,6 +81,7 @@
         enableMultiModel: boolean;
         chatMode: 'ask' | 'edit' | 'agent';
         createdAt: number;
+        modelThinkingSettings?: Record<string, { thinkingEnabled: boolean; thinkingEffort: ThinkingEffort }>;
     }
 
     let presets: Preset[] = [];
@@ -92,6 +95,10 @@
 
     // MultiModelSelector 打开状态
     let isModelSelectorOpen = false;
+
+    // 模型拖拽相关
+    let draggedModelIndex: number | null = null;
+    let dropModelIndicatorIndex: number | null = null;
 
     // 预设搜索筛选
     let presetSearchQuery = '';
@@ -112,6 +119,7 @@
         }>,
         enableMultiModel: false,
         chatMode: 'ask' as 'ask' | 'edit' | 'agent',
+        modelThinkingSettings: {} as Record<string, { thinkingEnabled: boolean; thinkingEffort: ThinkingEffort }>,
     };
 
     // 处理MultiModelSelector的选择事件（单模型模式）
@@ -287,6 +295,7 @@
             selectedModels: tempSelectedModels,
             enableMultiModel: tempEnableMultiModel,
             chatMode: tempChatMode,
+            modelThinkingSettings: tempModelThinkingSettings,
             createdAt: Date.now(),
         };
 
@@ -773,6 +782,7 @@
         tempSelectedModels = [];
         tempEnableMultiModel = false;
         tempChatMode = 'ask';
+        tempModelThinkingSettings = {};
         editingPresetId = '';
         newPresetName = '新预设';
     }
@@ -838,6 +848,7 @@
             selectedModels: [...tempSelectedModels],
             enableMultiModel: tempEnableMultiModel,
             chatMode: tempChatMode,
+            modelThinkingSettings: { ...tempModelThinkingSettings },
         };
     }
 
@@ -852,6 +863,7 @@
         if (tempEnableMultiModel !== initialState.enableMultiModel) return true;
         if (tempChatMode !== initialState.chatMode) return true;
         if (!areModelsEqual(tempSelectedModels, initialState.selectedModels)) return true;
+        if (!areThinkingSettingsEqual(tempModelThinkingSettings, initialState.modelThinkingSettings || {})) return true;
         return false;
     }
 
