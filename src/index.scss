@@ -122,3 +122,19 @@
   width:50%;  
   max-width: 300px;
 }
+.ai-sidebar {
+    .vditor-task {
+            list-style: none !important;
+            word-break: break-word;
+            position: relative;
+            line-height: 1;
+        }
+
+    .vditor-task input {
+        left: -1.4em;
+        position: absolute;
+        top: 0.15em;
+        width: 0.8em;
+        height: 0.8em;
+    }
+}
