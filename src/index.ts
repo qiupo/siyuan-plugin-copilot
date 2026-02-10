@@ -38,7 +38,7 @@ interface WebViewHistory {
 
 
 export default class PluginSample extends Plugin {
-    private aiSidebarApp: AISidebar;
+    private aiSidebarApps: Map<any, AISidebar> = new Map();
     private chatDialogs: Map<string, { dialog: Dialog; app: ChatDialog }> = new Map();
     private webApps: Map<string, any> = new Map(); // 存储待打开的小程序数据
     private webViewHistory: WebViewHistory[] = []; // WebView 历史记录
@@ -1558,17 +1558,27 @@ export default class PluginSample extends Plugin {
             type: AI_SIDEBAR_TYPE,
             init: (dock) => {
                 // @ts-ignore
-                this.aiSidebarApp = new AISidebar({
+                const app = new AISidebar({
                     target: dock.element,
                     props: {
                         plugin: this
                     }
                 });
+                this.aiSidebarApps.set(dock, app);
             },
-            destroy: () => {
-                if (this.aiSidebarApp) {
+            // @ts-ignore
+            destroy: (dock) => {
+                // 尝试根据 dock 实例销毁对应的 app
+                if (dock && this.aiSidebarApps.has(dock)) {
+                    const app = this.aiSidebarApps.get(dock);
                     // @ts-ignore
-                    this.aiSidebarApp.$destroy();
+                    app.$destroy();
+                    this.aiSidebarApps.delete(dock);
+                } else if (this.aiSidebarApps.size > 0) {
+                    // 如果无法获取 dock 参数，或者找不到对应的 app，
+                    // 为了避免误删导致其他 dock 变白，这里不做操作。
+                    // 依赖 onunload 进行最终清理。
+                    console.warn("Copilot dock destroy called but could not identify specific instance or dock argument missing.");
                 }
             }
         });
@@ -1822,6 +1832,18 @@ export default class PluginSample extends Plugin {
     async onunload() {
         //当插件被禁用的时候，会自动调用这个函数
         console.log("Copilot onunload");
+        
+        // 清理所有侧边栏实例
+        this.aiSidebarApps.forEach((app) => {
+            try {
+                // @ts-ignore
+                app.$destroy();
+            } catch (e) {
+                console.error("Failed to destroy sidebar app:", e);
+            }
+        });
+        this.aiSidebarApps.clear();
+
         if (mcpManager) {
             await mcpManager.close();
         }
