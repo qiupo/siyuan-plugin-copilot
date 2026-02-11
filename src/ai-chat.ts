@@ -1649,11 +1649,13 @@ export function limitMessagesByTokens(messages: Message[], maxTokens: number): M
     const systemMessages = allSystemMessages.length > 0 ? [allSystemMessages[allSystemMessages.length - 1]] : [];
     const systemTokens = calculateTotalTokens(systemMessages);
     
-    let remainingTokens = maxTokens - systemTokens;
-    if (remainingTokens <= 0) {
+    // 如果系统消息已经超过最大Token限制，只返回系统消息
+    // 注意：这里我们至少保留系统消息，即使它超过了限制
+    if (systemTokens >= maxTokens) {
         return systemMessages;
     }
 
+    let remainingTokens = maxTokens - systemTokens;
     const otherMessages = messages.filter(msg => msg.role !== 'system');
     const keptMessages: Message[] = [];
     
@@ -1662,12 +1664,22 @@ export function limitMessagesByTokens(messages: Message[], maxTokens: number): M
         const msg = otherMessages[i];
         const msgTokens = calculateTotalTokens([msg]);
         
-        if (remainingTokens - msgTokens < 0) {
+        // 尝试保留这条消息
+        if (remainingTokens - msgTokens >= 0) {
+            remainingTokens -= msgTokens;
+            keptMessages.unshift(msg);
+        } else {
+            // 如果剩余空间不足以放下这条消息
+            
+            // 1. 如果这是最新的一条消息（用户刚发送的），无论如何都要尝试保留
+            // 即使这会导致 Token 超限（API 可能会报错，但好过静默丢弃）
+            if (i === otherMessages.length - 1) {
+                keptMessages.unshift(msg);
+            }
+            
+            // 2. 如果不是最新消息，停止添加更早的消息
             break;
         }
-        
-        remainingTokens -= msgTokens;
-        keptMessages.unshift(msg);
     }
     
     // 合并 system 消息和保留的消息
