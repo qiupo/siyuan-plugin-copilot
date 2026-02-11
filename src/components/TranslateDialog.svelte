@@ -370,6 +370,10 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                     }
                 },
                 onError: (error: Error) => {
+                    if (error.message === 'Request aborted') {
+                        isTranslating = false;
+                        return;
+                    }
                     console.error('翻译API错误:', error);
                     isTranslating = false;
                     pushErrMsg(
@@ -379,7 +383,8 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
             });
         } catch (error: any) {
             console.error('翻译失败:', error);
-            if (error.name !== 'AbortError') {
+            const isAbort = error.name === 'AbortError' || error.message?.includes('BodyStreamBuffer was aborted');
+            if (!isAbort) {
                 pushErrMsg(
                     t('aiSidebar.translate.error') || `翻译失败: ${error.message || '未知错误'}`
                 );

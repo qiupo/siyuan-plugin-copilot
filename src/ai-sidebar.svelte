@@ -2690,7 +2690,7 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
     }
 
     // 多模型发送消息
-    async function sendMultiModelMessage() {
+    async function sendMultiModelMessage(customContext?: ContextDocument[]) {
         // 保存用户输入和附件
         const userContent = currentInput.trim();
         const userAttachments = [...currentAttachments];
@@ -2698,7 +2698,10 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
 
         // 获取所有上下文文档的最新内容
         const contextDocumentsWithLatestContent: ContextDocument[] = [];
-        if (userContextDocuments.length > 0) {
+        
+        if (customContext) {
+            contextDocumentsWithLatestContent.push(...customContext);
+        } else if (userContextDocuments.length > 0) {
             for (const doc of userContextDocuments) {
                 try {
                     const data = await exportMdContent(doc.id, false, false, 2, 0, false);
@@ -4743,10 +4746,13 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
             }
 
         } catch (error) {
-            console.error('Send message error:', error);
+            const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+            if (!isAbort) {
+                console.error('Send message error:', error);
+            }
             // onError 回调已经处理了错误消息的添加，这里不需要重复添加
             // 只需要在 onError 没有被调用的情况下（比如网络错误导致的异常）清理状态
-            if ((error as Error).name === 'AbortError') {
+            if (isAbort) {
                 // 中断错误已经在 abortMessage 中处理
             } else if (!isLoading) {
                 // 如果 isLoading 已经是 false，说明 onError 已经被调用并处理了
@@ -8577,6 +8583,49 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
             return;
         }
 
+        // 防止重复点击
+        isLoading = true;
+
+        // 获取最后一条用户消息关联的上下文文档，并获取最新内容
+        const contextDocumentsWithLatestContent: ContextDocument[] = [];
+        const userContextDocs = lastUserMessage.contextDocuments || [];
+        for (const doc of userContextDocs) {
+            try {
+                let content: string;
+
+                if (chatMode === 'edit') {
+                    // 编辑模式：获取kramdown格式，保留块ID结构
+                    const blockData = await getBlockKramdown(doc.id);
+                    if (blockData && blockData.kramdown) {
+                        content = blockData.kramdown;
+                    } else {
+                        // 降级使用缓存内容
+                        content = doc.content;
+                    }
+                } else {
+                    // 问答模式：获取Markdown格式
+                    const data = await exportMdContent(doc.id, false, false, 2, 0, false);
+                    if (data && data.content) {
+                        content = data.content;
+                    } else {
+                        // 降级使用缓存内容
+                        content = doc.content;
+                    }
+                }
+
+                contextDocumentsWithLatestContent.push({
+                    id: doc.id,
+                    title: doc.title,
+                    content: content,
+                    type: doc.type,
+                });
+            } catch (error) {
+                console.error(`Failed to fetch latest content for block ${doc.id}:`, error);
+                // 如果获取失败，使用原有内容
+                contextDocumentsWithLatestContent.push(doc);
+            }
+        }
+
         // 处理多模型重新生成的逻辑
         // 情况1：之前使用了多模型，且用户当前启用了多模型，优先使用当前用户设置的模型列表
         // 情况2：用户当前启用了多模型，使用当前选择的多模型
@@ -8627,7 +8676,7 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
                 enableMultiModel = true;
 
                 // 调用多模型发送
-                await sendMultiModelMessage();
+                await sendMultiModelMessage(contextDocumentsWithLatestContent);
 
                 // 恢复原来的设置
                 selectedMultiModels = originalMultiModels;
@@ -8638,7 +8687,7 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
         }
 
         // 重新发送请求
-        isLoading = true;
+        // isLoading = true; // 已在上方设置
         isAborted = false; // 重置中断标志
         streamingMessage = '';
         streamingThinking = '';
@@ -8647,52 +8696,17 @@ Translate the above text enclosed with <translate_input> into {outputLanguage} w
 
         await scrollToBottom(true);
 
-        // 获取最后一条用户消息关联的上下文文档，并获取最新内容
-        const contextDocumentsWithLatestContent: ContextDocument[] = [];
-        const userContextDocs = lastUserMessage.contextDocuments || [];
-        for (const doc of userContextDocs) {
-            try {
-                let content: string;
-
-                if (chatMode === 'edit') {
-                    // 编辑模式：获取kramdown格式，保留块ID结构
-                    const blockData = await getBlockKramdown(doc.id);
-                    if (blockData && blockData.kramdown) {
-                        content = blockData.kramdown;
-                    } else {
-                        // 降级使用缓存内容
-                        content = doc.content;
-                    }
-                } else {
-                    // 问答模式：获取Markdown格式
-                    const data = await exportMdContent(doc.id, false, false, 2, 0, false);
-                    if (data && data.content) {
-                        content = data.content;
-                    } else {
-                        // 降级使用缓存内容
-                        content = doc.content;
-                    }
-                }
-
-                contextDocumentsWithLatestContent.push({
-                    id: doc.id,
-                    title: doc.title,
-                    content: content,
-                    type: doc.type,
-                });
-            } catch (error) {
-                console.error(`Failed to fetch latest content for block ${doc.id}:`, error);
-                // 如果获取失败，使用原有内容
-                contextDocumentsWithLatestContent.push(doc);
-            }
-        }
+        // contextDocumentsWithLatestContent 已经在函数开头计算过了
+        // 此处不需要重新计算
 
         const userContent =
             typeof lastUserMessage.content === 'string'
                 ? lastUserMessage.content
                 : getMessageText(lastUserMessage.content);
 
-        let messagesToSend = prepareMessagesForAI(
+        const hasImages = lastUserMessage.attachments?.some(att => att.type === 'image');
+
+        let messagesToSend = await prepareMessagesForAI(
             messages,
             contextDocumentsWithLatestContent,
             userContent,

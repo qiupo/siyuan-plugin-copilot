@@ -652,7 +652,8 @@ async function chatOpenAIFormat(
         }
     } catch (error) {
         // 检查是否是用户主动中断
-        if ((error as Error).name === 'AbortError') {
+        const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+        if (isAbort) {
             console.log('Request was aborted by user');
             options.onError?.(new Error('Request aborted'));
         } else {
@@ -829,7 +830,8 @@ async function chatGeminiFormat(
         }
     } catch (error) {
         // 检查是否是用户主动中断
-        if ((error as Error).name === 'AbortError') {
+        const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+        if (isAbort) {
             console.log('Gemini request was aborted by user');
             options.onError?.(new Error('Request aborted'));
         } else {
@@ -1004,7 +1006,8 @@ async function handleStreamResponse(
         options.onComplete?.(fullText);
     } catch (error) {
         // 检查是否是用户主动中断
-        if ((error as Error).name === 'AbortError') {
+        const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+        if (isAbort) {
             console.log('Stream reading was aborted');
             // 如果已经有部分内容，仍然调用 onComplete
             if (fullText) {
@@ -1110,7 +1113,8 @@ async function handleGeminiStreamResponse(
         options.onComplete?.(fullText);
     } catch (error) {
         // 检查是否是用户主动中断
-        if ((error as Error).name === 'AbortError') {
+        const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+        if (isAbort) {
             console.log('Gemini stream reading was aborted');
             // 如果已经有部分内容，仍然调用 onComplete
             if (fullText) {
@@ -1272,7 +1276,8 @@ async function chatClaudeFormat(
             options.onComplete?.(content);
         }
     } catch (error) {
-        if ((error as Error).name === 'AbortError') {
+        const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+        if (isAbort) {
             console.log('Claude request was aborted by user');
             options.onError?.(new Error('Request aborted'));
         } else {
@@ -1364,7 +1369,8 @@ async function handleClaudeStreamResponse(
 
         options.onComplete?.(fullText);
     } catch (error) {
-        if ((error as Error).name === 'AbortError') {
+        const isAbort = (error as Error).name === 'AbortError' || (error as Error).message?.includes('BodyStreamBuffer was aborted');
+        if (isAbort) {
             console.log('Claude stream reading was aborted');
             if (fullText) {
                 options.onComplete?.(fullText);
