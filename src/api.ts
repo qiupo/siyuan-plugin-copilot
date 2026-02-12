@@ -450,7 +450,8 @@ export async function openBlock(blockId: string) {
                 action: ["cb-get-focus", "cb-get-scroll"]
             },
             keepCursor: false,
-            removeCurrentTab: false
+            removeCurrentTab: false,
+            openNewTab: true
         });
     } else {
         openTab({
@@ -460,12 +461,12 @@ export async function openBlock(blockId: string) {
                 action: ["cb-get-focus", "cb-get-context", "cb-get-hl"]
             },
             keepCursor: false,
-            removeCurrentTab: false
+            removeCurrentTab: false,
+            openNewTab: true
         });
 
     }
 }
-
 // **************************************** Template ****************************************
 
 export async function render(id: DocumentId, path: string): Promise<IResGetTemplates> {
