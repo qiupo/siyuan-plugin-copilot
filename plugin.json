@@ -1,8 +1,8 @@
 {
-  "name": "siyuan-plugin-my-copilot",
+  "name": "siyuan-plugin-copilot",
   "author": "qiupo",
   "url": "https://github.com/qiupo/siyuan-plugin-copilot",
-  "version": "2.0.0",
+  "version": "10.0.0",
   "minAppVersion": "3.0.12",
   "backends": [
     "all"
@@ -13,7 +13,7 @@
   "disabledInPublish": true,
   "displayName": {
     "default": "SiYuan Copilot",
-    "zh_CN": "思源copilot"
+    "zh_CN": "SiYuan Copilot"
   },
   "description": {
     "default": "SiYuan AI Assistant, supports dragging blocks and tabs to get note context, enabling Q&A and editing based on SiYuan note content",
