@@ -1213,28 +1213,6 @@ description: 描述这个 Skill 的功能
                 },
             ],
         },
-        {
-            name: '❤️用爱发电',
-            items: [
-                {
-                    key: 'donateInfo',
-                    value: '',
-                    type: 'hint',
-                    title: '用爱发电',
-                    description: `
-                        <p style="margin-top:12px;">如果喜欢我的插件，欢迎给GitHub仓库点star和微信赞赏，这会激励我继续完善此插件和开发新插件。</p>
-
-                        <p style="margin-top:12px;">维护插件费时费力，个人时间和精力有限，开源只是分享，不等于我要浪费我的时间免费帮用户实现ta需要的功能，</p>
-
-
-                        
-                        <div style="margin-top:12px;">
-                        <img src="plugins/siyuan-plugin-copilot/assets/donate.png" alt="donate" style="max-width:260px; height:auto; border:1px solid var(--b3-border-color);"/>
-                        </div>
-                    `,
-                },
-            ],
-        },
     ];
 
     let focusGroup = groups[0].name;
